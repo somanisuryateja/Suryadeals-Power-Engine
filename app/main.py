@@ -6,6 +6,7 @@ serves one page where each job can be marked applied or skipped.
 
 Run locally:  uvicorn app.main:app --port 8010
 Import jobs:  python -m app.main --import DIR   (DIR of <id>.json job files)
+Mark jobs:    python -m app.main --mark skipped id1,id2
 """
 import json, os, sqlite3, sys, threading, time
 from datetime import datetime, timedelta, timezone
@@ -45,12 +46,12 @@ def init_db():
         """)
 
 
-def save_jobs(jobs):
-    """Insert new jobs only; existing ones keep their notes. Returns how many were new."""
+def save_jobs(jobs, replace=False):
+    """Insert new jobs (existing ones keep their notes unless replace). Returns rows written."""
     now = datetime.now(timezone.utc).isoformat()
     with db() as con:
         before = con.total_changes
-        con.executemany("INSERT OR IGNORE INTO jobs VALUES (?,?,?,?)",
+        con.executemany(f"INSERT OR {'REPLACE' if replace else 'IGNORE'} INTO jobs VALUES (?,?,?,?)",
                         [(j["id"], j["postedAt"], now, json.dumps(j, ensure_ascii=False)) for j in jobs])
         added = con.total_changes - before
         cut = (datetime.now(timezone.utc) - timedelta(days=KEEP_DAYS)).isoformat()
@@ -75,7 +76,9 @@ AI_WORDS = {"llm", "livekit", "webrtc", "fastapi", "python"}
 
 def make_note(job):
     stack = set(job.get("stack") or [])
-    shown = [s for s in ["react", "nodejs", "node", "typescript", "python", "fastapi", "mongodb", "nextjs", "llm"] if s in stack][:4]
+    names = {"react": "React", "nodejs": "Node.js", "node": "Node.js", "typescript": "TypeScript", "python": "Python",
+             "fastapi": "FastAPI", "mongodb": "MongoDB", "nextjs": "Next.js", "llm": "LLMs"}
+    shown = list(dict.fromkeys(names[s] for s in names if s in stack))[:4]
     ai_role = bool(stack & AI_WORDS) or "ai" in job["title"].lower()
     picks = ["ai", "api"] if ai_role else ["api", "perf"]
     if "payment" in (job.get("desc") or "").lower():
@@ -194,16 +197,27 @@ def page():
 
 # --- CLI: import job files (e.g. notes written by Claude) -------------------
 def import_dir(path):
+    """Load hand-checked jobs (their notes replace template ones)."""
     init_db()
-    jobs, marks = [], []
+    jobs = []
     for f in Path(path).glob("*.json"):
-        d = json.loads(f.read_text(encoding="utf-8"))
         if f.stem in ("meta", "writes"):
             continue
+        d = json.loads(f.read_text(encoding="utf-8"))
         d["id"] = f.stem
+        if SIGNATURE and d.get("note") and SIGNATURE not in d["note"]:
+            d["note"] = d["note"].rsplit("\n\n", 1)[0] + f"\n\n{SIGNATURE}"
         jobs.append(d)
-    added = save_jobs(jobs)
-    print(f"Imported {added} new jobs from {path}")
+    print(f"Imported {save_jobs(jobs, replace=True)} jobs from {path}")
+
+
+def set_marks(ids, status):
+    """Mark jobs from the command line, e.g. old posts found by a manual check."""
+    init_db()
+    with db() as con:
+        con.executemany("INSERT OR REPLACE INTO marks VALUES (?,?,?)",
+                        [(i, status, datetime.now(timezone.utc).isoformat()) for i in ids])
+    print(f"Marked {len(ids)} as {status}")
 
 
 def _selfcheck():
@@ -220,5 +234,8 @@ def _selfcheck():
 if __name__ == "__main__":
     if "--import" in sys.argv:
         import_dir(sys.argv[sys.argv.index("--import") + 1])
+    elif "--mark" in sys.argv:  # --mark applied|skipped id1,id2,...
+        i = sys.argv.index("--mark")
+        set_marks(sys.argv[i + 2].split(","), sys.argv[i + 1])
     elif "--selfcheck" in sys.argv:
         _selfcheck(); print("selfcheck ok")
