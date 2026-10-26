@@ -1,0 +1,15 @@
+# runtime data and personal details never go in the repo
+data/
+*.db
+*.env
+.env
+jobs_today.json
+seen_jobs.json
+jobs_today.html
+load/
+htpasswd*
+
+.venv/
+venv/
+__pycache__/
+*.pyc

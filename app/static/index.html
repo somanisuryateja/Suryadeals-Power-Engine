@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<title>Suryadeals Power Engine</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column of job cards under a sticky filter bar; summary first, detail in each card. */
+:root {
+  --bg: #f4f6f8; --surface: #ffffff; --ink: #15212c; --muted: #5b6875; --line: #dde3e9;
+  --accent: #2547c4; --accent-ink: #ffffff; --good: #1d7a4c; --good-bg: #e3f3ea; --warn: #9a5b00; --warn-bg: #fbf0dc;
+  --chip: #eef1f5;
+  --display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f151b; --surface: #161e26; --ink: #e6ebf0; --muted: #96a3b0; --line: #26313c;
+  --accent: #7d97ff; --accent-ink: #0f151b; --good: #5fd39a; --good-bg: #133325; --warn: #f0b45c; --warn-bg: #352713;
+  --chip: #1f2a34; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0f151b; --surface: #161e26; --ink: #e6ebf0; --muted: #96a3b0; --line: #26313c;
+  --accent: #7d97ff; --accent-ink: #0f151b; --good: #5fd39a; --good-bg: #133325; --warn: #f0b45c; --warn-bg: #352713;
+  --chip: #1f2a34; color-scheme: dark }
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--ink); font: 15px/1.5 var(--body); margin: 0; }
+.runrow { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between }
+.msg { font-size: 13px; color: var(--warn) }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bg) }
+.wrap { max-width: 860px; margin: 0 auto; padding-block: 24px 64px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+header { display: grid; gap: 6px; margin-bottom: 16px }
+h1 { font: 700 clamp(28px, 5vw, 40px)/1.1 var(--display); margin: 0; letter-spacing: -0.01em; text-wrap: balance }
+.sub { color: var(--muted); margin: 0 }
+.run { font: 13px/1.5 var(--mono); color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 14px }
+.bar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--bg); padding-block: 10px;
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center; border-bottom: 1px solid var(--line); margin-bottom: 16px }
+.tab { font: 500 14px var(--body); border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+  border-radius: 999px; padding: 6px 14px; cursor: pointer; font-variant-numeric: tabular-nums }
+.tab[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink) }
+.tab:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+.toggle { margin-left: auto; display: flex; gap: 6px; align-items: center; font-size: 14px; color: var(--muted) }
+.list { display: grid; gap: 12px }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: grid; gap: 10px; min-width: 0 }
+.card.done { opacity: .6 }
+.top { display: flex; gap: 12px; justify-content: space-between; align-items: flex-start; flex-wrap: wrap }
+.co { font: 500 13px var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: .04em }
+.role { font: 600 18px/1.3 var(--display); margin: 2px 0 0; overflow-wrap: anywhere }
+.pay { font: 600 15px var(--mono); padding: 4px 10px; border-radius: 6px; background: var(--chip); white-space: nowrap; font-variant-numeric: tabular-nums }
+.pay.hi { background: var(--good-bg); color: var(--good) }
+.facts { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 14px; color: var(--muted) }
+.facts b { color: var(--ink); font-weight: 500 }
+.chips { display: flex; flex-wrap: wrap; gap: 6px }
+.chip { font: 12px var(--mono); background: var(--chip); border-radius: 4px; padding: 2px 8px }
+.checks { margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; font-size: 13px; color: var(--muted) }
+.checks li::before { content: "✓ "; color: var(--good); font-weight: 600 }
+.checks li.flag::before { content: "! "; color: var(--warn) }
+details { border-top: 1px dashed var(--line); padding-top: 8px }
+summary { cursor: pointer; font-weight: 500; font-size: 14px }
+.note { white-space: pre-wrap; background: var(--bg); border-radius: 6px; padding: 10px 12px; margin: 8px 0; font-size: 14px; overflow-wrap: anywhere }
+.contact { font: 13px var(--mono); color: var(--muted); overflow-wrap: anywhere; user-select: all }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center }
+.btn { font: 500 14px var(--body); border-radius: 8px; padding: 8px 14px; cursor: pointer; border: 1px solid var(--line);
+  background: var(--surface); color: var(--ink); text-decoration: none; display: inline-flex; align-items: center; gap: 6px }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent) }
+.btn.small { padding: 5px 10px; font-size: 13px }
+.status { font: 500 13px var(--mono); color: var(--good) }
+.empty { background: var(--surface); border: 1px dashed var(--line); border-radius: 10px; padding: 28px; text-align: center; color: var(--muted) }
+.empty h2 { font: 600 20px var(--display); color: var(--ink); margin: 0 0 6px }
+@media (prefers-reduced-motion: no-preference) { .card { transition: opacity .2s } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Morning Jobs</h1>
+    <p class="sub">Fresh roles for Hyderabad or remote India, each checked at its source. Apply on the company page, then tick it here.</p>
+    <div class="runrow">
+      <div class="run" id="run">Loading…</div>
+      <button class="btn" type="button" id="refresh">Search now</button>
+    </div>
+    <div class="msg" id="msg" hidden></div>
+  </header>
+
+  <div class="bar" role="toolbar" aria-label="Filter jobs">
+    <button class="tab" id="tab-new" data-view="new" aria-pressed="true">To apply <span id="n-new"></span></button>
+    <button class="tab" id="tab-applied" data-view="applied" aria-pressed="false">Applied <span id="n-applied"></span></button>
+    <button class="tab" id="tab-skipped" data-view="skipped" aria-pressed="false">Skipped <span id="n-skipped"></span></button>
+    <label class="toggle"><input type="checkbox" id="only25"> ₹25L+ pay only</label>
+  </div>
+
+  <div class="list" id="list">
+    <div class="empty"><h2>No jobs loaded yet</h2>Every morning at 8 AM IST, Claude checks company job boards, Himalayas and the HN hiring thread, verifies each job, writes a note for it and lists it here.</div>
+  </div>
+</div>
+
+<script>
+const state = { jobs: [], marks: {}, view: "new", only25: false, db: null, canWrite: true };
+const $ = id => document.getElementById(id);
+try { state.only25 = localStorage.getItem("only25") === "1"; state.view = localStorage.getItem("view") || "new"; } catch (e) {}
+$("only25").checked = state.only25;
+
+function ago(iso) {
+  const h = (Date.now() - new Date(iso).getTime()) / 36e5;
+  if (h < 1) return "under 1 h ago";
+  if (h < 48) return Math.round(h) + " h ago";
+  return Math.round(h / 24) + " days ago";
+}
+function ist(iso) {
+  return new Date(iso).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) + " IST";
+}
+function el(tag, attrs = {}, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") e.className = v; else if (k.startsWith("on")) e.addEventListener(k.slice(2), v); else e.setAttribute(k, v);
+  }
+  for (const k of kids.flat()) if (k != null && k !== false) e.append(k.nodeType ? k : String(k));
+  return e;
+}
+
+async function copy(text, btn) {
+  try { await navigator.clipboard.writeText(text); btn.textContent = "Copied"; }
+  catch (e) {
+    const pre = btn.closest("details").querySelector(".note");
+    const r = document.createRange(); r.selectNodeContents(pre);
+    const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+    btn.textContent = "Selected: press Ctrl+C";
+  }
+  setTimeout(() => (btn.textContent = "Copy note"), 2500);
+}
+
+function say(text) { $("msg").textContent = text; $("msg").hidden = !text; }
+
+async function mark(id, status) {
+  const prev = state.marks[id];
+  state.marks[id] = status ? { status } : undefined; render();
+  try {
+    const r = await fetch(`api/jobs/${id}/mark`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }) });
+    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    say("");
+  } catch (e) { state.marks[id] = prev; render(); say("Couldn't save that: " + e.message); }
+}
+
+function card(j) {
+  const m = state.marks[j.id];
+  const payTxt = j.payLakh ? `₹${j.payLakh}L+` : (j.pay || "Pay not listed");
+  const facts = el("div", { class: "facts" },
+    el("span", {}, el("b", {}, j.where)),
+    el("span", {}, "Posted ", el("b", {}, ago(j.postedAt))),
+    el("span", {}, j.years ? `Asks ${j.years}+ yrs` : "Years not stated"),
+    el("span", {}, "via " + j.source));
+  const checks = el("ul", { class: "checks" }, (j.checks || []).map(c => el("li", { class: /^!/.test(c) ? "flag" : "" }, c.replace(/^!\s*/, ""))));
+  const note = j.note ? el("details", {},
+    el("summary", {}, "Note to send"),
+    el("div", { class: "note" }, j.note),
+    el("button", { class: "btn small", type: "button", onclick: e => copy(j.note, e.currentTarget) }, "Copy note")) : null;
+  const contact = j.contact ? el("div", { class: "contact" }, "Contact: " + j.contact) : null;
+  const actions = el("div", { class: "actions" },
+    el("a", { class: "btn primary", href: j.url, target: "_blank", rel: "noopener" }, "Open job ↗"),
+    j.hn ? el("a", { class: "btn", href: j.hn, target: "_blank", rel: "noopener" }, "HN post ↗") : null,
+    state.canWrite && state.db ? (m
+      ? [el("span", { class: "status" }, m.status === "applied" ? "✓ Applied" : "Skipped"),
+         el("button", { class: "btn small", type: "button", onclick: () => mark(j.id, null) }, "Undo")]
+      : [el("button", { class: "btn", type: "button", onclick: () => mark(j.id, "applied") }, "Mark applied"),
+         el("button", { class: "btn", type: "button", onclick: () => mark(j.id, "skipped") }, "Skip")]) : null);
+  return el("article", { class: "card" + (m ? " done" : "") },
+    el("div", { class: "top" },
+      el("div", { style: "min-width:0" }, el("div", { class: "co" }, j.company), el("h2", { class: "role" }, j.title)),
+      el("div", { class: "pay" + (j.pay25 ? " hi" : "") }, payTxt)),
+    facts,
+    (j.stack || []).length ? el("div", { class: "chips" }, j.stack.map(s => el("span", { class: "chip" }, s))) : null,
+    checks, j.why ? el("p", { style: "margin:0;font-size:14px" }, j.why) : null, contact, note, actions);
+}
+
+function render() {
+  const by = s => state.jobs.filter(j => (state.marks[j.id]?.status || "new") === s && (!state.only25 || j.pay25));
+  const groups = { new: by("new"), applied: by("applied"), skipped: by("skipped") };
+  for (const k of Object.keys(groups)) {
+    $("n-" + k).textContent = `(${groups[k].length})`;
+    $("tab-" + k).setAttribute("aria-pressed", String(state.view === k));
+  }
+  const list = $("list"); list.replaceChildren();
+  const rows = groups[state.view];
+  if (!state.jobs.length) {
+    list.append(el("div", { class: "empty" }, el("h2", {}, "No jobs loaded yet"),
+      "Every morning at 8 AM IST the engine checks 100+ company job boards, Himalayas and the HN hiring thread and lists the jobs that pass every check here. Use Search now to run it any time."));
+  } else if (!rows.length) {
+    list.append(el("div", { class: "empty" }, el("h2", {}, state.view === "new" ? "Nothing left to apply to" : "Nothing here yet"),
+      state.view === "new" ? "You've handled every job from the latest runs. The next refresh is at 8 AM IST." : "Jobs you tick appear here."));
+  } else rows.forEach(j => list.append(card(j)));
+}
+
+document.querySelectorAll(".tab").forEach(b => b.addEventListener("click", () => {
+  state.view = b.dataset.view; try { localStorage.setItem("view", state.view); } catch (e) {} render();
+}));
+$("only25").addEventListener("change", e => { state.only25 = e.target.checked; try { localStorage.setItem("only25", state.only25 ? "1" : "0"); } catch (x) {} render(); });
+render();
+
+let poll = null;
+async function load() {
+  try {
+    const r = await fetch("api/jobs", { cache: "no-store" });
+    if (!r.ok) throw new Error(r.statusText);
+    const d = await r.json();
+    state.db = true;
+    state.jobs = d.jobs.sort((a, b) => (b.pay25 - a.pay25) || (new Date(b.postedAt) - new Date(a.postedAt)));
+    state.marks = d.marks;
+    const run = d.lastRun;
+    $("run").replaceChildren(...(d.running ? [el("span", {}, "Searching all sources now… this takes 2–4 minutes")] : run ? [
+      el("span", {}, "Refreshed " + ist(run.at)),
+      el("span", {}, `${run.checked} jobs checked`),
+      el("span", {}, `${run.added} new`),
+      el("span", {}, Object.entries(run.sources || {}).map(([k, v]) => `${k} ${v}`).join(" · "))] : [el("span", {}, "First search running…")]));
+    $("refresh").disabled = d.running;
+    if (d.error) say("Last search failed: " + d.error);
+    clearTimeout(poll);
+    if (d.running) poll = setTimeout(load, 8000);
+    render();
+  } catch (e) { say("Couldn't load jobs: " + e.message); }
+}
+$("refresh").addEventListener("click", async () => {
+  const r = await fetch("api/refresh", { method: "POST" });
+  if (r.ok) { say(""); load(); } else say((await r.json()).detail || "Couldn't start a search.");
+});
+load();
+</script>
+</body>
+</html>
