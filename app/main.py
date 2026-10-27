@@ -130,8 +130,10 @@ def scheduler():
     if not last_run():
         run_collect()
     while True:
-        now = datetime.now(timezone.utc)
-        time.sleep(max(1, (next_8am_ist(now) - now).total_seconds()))
+        target = next_8am_ist(datetime.now(timezone.utc))
+        # Check the wall clock every 5 min: one long sleep woke an hour late on the VM.
+        while (left := (target - datetime.now(timezone.utc)).total_seconds()) > 0:
+            time.sleep(min(300, left))
         run_collect()
 
 
