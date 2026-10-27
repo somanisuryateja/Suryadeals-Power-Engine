@@ -87,5 +87,5 @@ EOF
 fi
 sudo nginx -t -q && sudo systemctl reload nginx
 
-sleep 2
-curl -fsS "http://127.0.0.1:$PORT/api/health" && echo && echo "Live: https://$DOMAIN/"
+for _ in $(seq 20); do curl -fsS "http://127.0.0.1:$PORT/api/health" 2>/dev/null && break; sleep 1; done
+echo && echo "Live: https://$DOMAIN/"
