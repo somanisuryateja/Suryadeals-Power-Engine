@@ -18,9 +18,9 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 try:
-    from engine import job_scanner as js, linkedin, workday
+    from engine import job_scanner as js, linkedin, oracle_hcm, workday
 except ImportError:  # run as a script from this folder
-    import job_scanner as js, linkedin, workday
+    import job_scanner as js, linkedin, oracle_hcm, workday
 
 HERE = Path(__file__).parent
 USD_INR = 84  # ponytail: fixed rate, only used to flag 25L+ pay
@@ -182,6 +182,10 @@ def from_workday(days, now):
     return workday.collect(js.keep, max_days=max(1, round(days)), now=now)
 
 
+def from_oracle(days, now):
+    return oracle_hcm.collect(js.keep, max_days=max(1, round(days)), now=now)
+
+
 def collect(days=2, max_years=MAX_YEARS, slow=True):
     """Run every source and checks; return the run as a dict.
     slow=False skips Himalayas and HN (heavy, slow-changing) on the frequent runs."""
@@ -189,7 +193,7 @@ def collect(days=2, max_years=MAX_YEARS, slow=True):
     boards, n_boards, errors = from_boards(days, now)
     counts = {"Company job boards": len(boards)}
     jobs = list(boards)
-    for name, fn in [("LinkedIn", from_linkedin), ("Workday", from_workday)]:
+    for name, fn in [("LinkedIn", from_linkedin), ("Workday", from_workday), ("Oracle HCM", from_oracle)]:
         try:
             got, errs = fn(days, now)
             errors += errs
@@ -226,7 +230,7 @@ def collect(days=2, max_years=MAX_YEARS, slow=True):
                      "payLakh": lakh, "pay25": bool(lakh and lakh >= 25), "source": j["source"],
                      "checks": j["checks"], "hn": j.get("hn", ""), "applicants": j.get("applicants", ""), "verify": j.get("verify", ""), "desc": (j.get("desc") or "")[:1500]})
     kept.sort(key=lambda j: (not j["pay25"], -datetime.fromisoformat(j["postedAt"]).timestamp()))
-    return {"runAt": now.isoformat(), "days": days, "companiesChecked": n_boards + len(workday.SITES), "sources": counts,
+    return {"runAt": now.isoformat(), "days": days, "companiesChecked": n_boards + len(workday.SITES) + len(oracle_hcm.SITES), "sources": counts,
             "kept": kept, "rejectedCount": len(rejected), "rejectedSample": rejected[:40], "errors": errors[:40]}
 
 
@@ -239,6 +243,8 @@ def probe():
             print(f"  {'FAIL' if err else 'ok  '}  {ats:15} {s:28} {err or str(len(found)) + ' jobs'}")
     print("Workday:")
     workday.probe()
+    print("Oracle HCM:")
+    oracle_hcm.probe()
     print("LinkedIn (1 search):")
     try:
         cards = linkedin.parse_cards(linkedin._get("https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?" +
@@ -273,7 +279,7 @@ def _selfcheck():
     assert pay_inr_lakh("INR 1200000-1700000/annual") == 12.0
     assert pay_inr_lakh("") is None
     j = {"title": "Backend Engineer", "desc": "Remote - available across all EU/LATAM countries. Python, React."}
-    linkedin._selfcheck(); workday._selfcheck()
+    linkedin._selfcheck(); workday._selfcheck(); oracle_hcm._selfcheck()
     assert "region" in check_text(j, 4)
     j = {"title": "Full Stack Engineer", "desc": "3+ years with React, Node.js and TypeScript. Remote India."}
     assert check_text(j, 4) is None and j["yrs"] == 3

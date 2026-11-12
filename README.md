@@ -10,7 +10,8 @@ Every 30 minutes from 8:00 AM to 11:00 PM IST, and on demand from the page (at m
 
 1. **Collects** jobs posted in the last 2 days from:
    - about 104 company job boards through their public APIs (Greenhouse, Lever, Ashby, SmartRecruiters);
-   - **Workday** career sites of large companies (NVIDIA, Salesforce, Adobe, Walmart, Intel, Novartis…), searched for Hyderabad and remote India;
+   - **Workday** career sites of large companies (NVIDIA, Salesforce, Adobe, Intel, Novartis…), searched for Hyderabad and remote India;
+   - **Oracle Recruiting Cloud** career sites (Dell), newest India jobs first;
    - **LinkedIn public job search** (logged out, no account): 4 searches per run, rotated, pausing 2 h if rate-limited;
    - every 3 hours: Himalayas (remote, India) and the Hacker News "Who is hiring" thread.
 2. **Checks** each job against Surya's rules: Hyderabad or remote open to India; React / Node / TypeScript / Python stack;
@@ -58,6 +59,7 @@ engine/job_scanner.py   company job-board readers + title/location filters
 engine/daily_jobs.py    all sources + checks -> one list of verified jobs; --probe
 engine/linkedin.py      LinkedIn public search (no login)
 engine/workday.py       Workday career sites
+engine/oracle_hcm.py    Oracle Recruiting Cloud career sites (Dell)
 test_offline.py         end-to-end test with fake sources
 app/main.py             FastAPI: storage, 30-min schedule, Telegram alerts, refresh, notes
 app/static/index.html   the page

@@ -11,7 +11,7 @@ os.environ["ENGINE_DB"] = str(Path(tempfile.mkdtemp()) / "engine.db")
 os.environ["TELEGRAM_BOT_TOKEN"], os.environ["TELEGRAM_CHAT_ID"] = "t", "1"
 
 from app import main as m
-from engine import daily_jobs as dj, job_scanner as js, linkedin, workday
+from engine import daily_jobs as dj, job_scanner as js, linkedin, oracle_hcm, workday
 
 now = datetime.now(timezone.utc)
 iso = lambda **kw: (now - timedelta(**kw)).isoformat().replace("+00:00", "Z")
@@ -59,11 +59,21 @@ def fake_wd_json(url, body=None):
                                "externalUrl": "https://nvidia.wd5.myworkdayjobs.com/x/job/SE_JR1"}}
 
 
+def fake_oracle_json(url):
+    if "recruitingCEJobRequisitions?" in url:  # list: one fresh Hyderabad job, one 9 days old
+        req = lambda i, d: {"Id": i, "Title": "Software Engineer", "PostedDate": (now - timedelta(days=d)).date().isoformat(),
+                            "PrimaryLocation": "Hyderabad, Telangana, India", "WorkplaceType": "On-site", "secondaryLocations": []}
+        return {"items": [{"TotalJobsCount": 2, "requisitionList": [req("D1", 0), req("D2", 9)]}]}
+    return {"items": [{"ExternalDescriptionStr": "<p>2+ years React, Node.js</p>",
+                       "ExternalPostedStartDate": (now - timedelta(hours=2)).isoformat()}]}
+
+
 js.COMPANIES = {"greenhouse": ["acme"]}
 js.get_json = fake_get_json
 linkedin._get = fake_li_get
 linkedin.PAUSE = 0
 workday._json = fake_wd_json
+oracle_hcm._json = fake_oracle_json
 sent = []
 m.tg_send = lambda text: sent.append(text) or True
 
@@ -74,7 +84,7 @@ m.state["last_slow"] = 9e18          # skip Himalayas/HN (network) in this test
 m.run_collect()                      # first run: primes alerts, sends nothing
 assert m.state["error"] == "", m.state["error"]
 titles = {(j["company"], j["source"]) for j in m.jobs()["jobs"]}
-assert titles == {("Acme", "Greenhouse"), ("Roche", "LinkedIn"), ("NVIDIA", "Workday")}, titles
+assert titles == {("Acme", "Greenhouse"), ("Roche", "LinkedIn"), ("NVIDIA", "Workday"), ("Dell", "Oracle HCM")}, titles
 assert sent == [], "first run must not flood Telegram"
 
 GH["jobs"].append({"id": 5, "title": "Full Stack Engineer", "location": {"name": "Hyderabad"}, "first_published": iso(minutes=10),
@@ -85,7 +95,7 @@ assert len(sent) == 1 and "Full Stack Engineer · Acme" in sent[0] and "3+ yrs a
 m.run_collect()                      # third run: nothing new, nothing sent
 assert len(sent) == 1
 run = m.last_run()
-assert run["sources"]["LinkedIn"] == 1 and run["sources"]["Workday"] == 1 and run["alerted"] == 0
+assert run["sources"]["LinkedIn"] == 1 and run["sources"]["Workday"] == 1 and run["sources"]["Oracle HCM"] == 1 and run["alerted"] == 0
 # a job older than the look-back is dropped in collect(), whatever the source: not saved, counted or alerted
 old, _ = dj.from_workday(2, now)
 old = [dict(old[0], url="https://wd/old", posted=now - timedelta(days=10), checks=[])]
@@ -98,5 +108,5 @@ assert "3+ years" not in note and "Roche" in note
 
 from fastapi.testclient import TestClient
 r = TestClient(m.app).get("/api/jobs").json()
-assert len(r["jobs"]) == 4 and r["lastRun"]["checked"] >= 4
+assert len(r["jobs"]) == 5 and r["lastRun"]["checked"] >= 4
 print("offline end-to-end ok:", sorted(titles), "| Telegram alerts:", len(sent))
