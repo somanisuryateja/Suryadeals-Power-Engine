@@ -1,14 +1,21 @@
-"""Suryadeals Power Engine: a daily, source-checked job feed.
+"""Suryadeals Power Engine: a source-checked job feed with Telegram alerts.
 
-FastAPI app. Collects jobs with engine/daily_jobs.py every day at 8:00 AM IST
-(and on demand, at most once per 15 minutes), stores them in SQLite, and
-serves one page where each job can be marked applied or skipped.
+FastAPI app. Collects jobs with engine/daily_jobs.py every 30 minutes from
+8:00 AM to 11:00 PM IST (and on demand, at most once per 15 minutes), stores
+them in SQLite, sends each new match to Telegram once, and serves one page
+where each job can be marked applied or skipped.
+
+Telegram: set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in /etc/power-engine.env.
+Find the chat id:  python -m app.main --telegram-chat-id   (after pressing Start in the bot)
+Send a test:       python -m app.main --telegram-test
 
 Run locally:  uvicorn app.main:app --port 8010
 Import jobs:  python -m app.main --import DIR   (DIR of <id>.json job files)
 Mark jobs:    python -m app.main --mark skipped id1,id2
 """
 import json, os, sqlite3, sys, threading, time
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -23,7 +30,14 @@ DB_PATH = Path(os.environ.get("ENGINE_DB", ROOT / "data" / "engine.db"))
 SIGNATURE = os.environ.get("ENGINE_SIGNATURE", "")  # name, phone, email: kept out of the repo
 IST = timezone(timedelta(hours=5, minutes=30))
 REFRESH_GAP = 15 * 60
-KEEP_DAYS = 21
+KEEP_DAYS = 7                    # page shows a week
+LOOKBACK_DAYS = 2                # each run only looks at jobs posted in the last 2 days
+EVERY_MIN = 30                   # run every 30 min ...
+DAY_START, DAY_END = 8, 23       # ... between 08:00 and 23:00 IST
+SLOW_EVERY_S = 3 * 3600          # Himalayas + HN at most every 3 h
+MAX_ALERTS = 15                  # per run; more are summarised in one message
+TG_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TG_CHAT = os.environ.get("TELEGRAM_CHAT_ID", "")
 
 app = FastAPI(title="Suryadeals Power Engine")
 run_lock = threading.Lock()
@@ -43,6 +57,7 @@ def init_db():
             CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, posted_at TEXT, added_at TEXT, body TEXT);
             CREATE TABLE IF NOT EXISTS marks (id TEXT PRIMARY KEY, status TEXT, at TEXT);
             CREATE TABLE IF NOT EXISTS runs (at TEXT, body TEXT);
+            CREATE TABLE IF NOT EXISTS alerts (id TEXT PRIMARY KEY, at TEXT);
         """)
 
 
@@ -83,14 +98,63 @@ def make_note(job):
     picks = ["ai", "api"] if ai_role else ["api", "perf"]
     if "payment" in (job.get("desc") or "").lower():
         picks[-1] = "pay"
-    lead = f"Hi, I'm a full-stack engineer with 3+ years of experience" + (f", mostly {', '.join(shown)}." if shown else ".")
+    # Rule: describe the work, never "3+ years", in free text.
+    lead = "Hi, I'm a full-stack engineer" + (f" working mostly in {', '.join(shown)}." if shown else ".")
     body = " ".join(FACTS[p] for p in picks)
     close = f"I'd like to bring that to {job['company']}. I'm in Hyderabad and can join immediately."
     return f"{lead} {body}\n\n{close}" + (f"\n\n{SIGNATURE}" if SIGNATURE else "")
 
 
 # --- runs ------------------------------------------------------------------
-state = {"running": False, "error": ""}
+state = {"running": False, "error": "", "last_slow": 0.0}
+
+
+# --- Telegram ----------------------------------------------------------------
+def tg_send(text):
+    if not (TG_TOKEN and TG_CHAT):
+        return False
+    data = urlencode({"chat_id": TG_CHAT, "text": text, "disable_web_page_preview": "true"}).encode()
+    with urlopen(Request(f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage", data=data), timeout=20) as r:
+        return json.load(r).get("ok", False)
+
+
+def alert_text(j, now=None):
+    now = now or datetime.now(timezone.utc)
+    mins = (now - datetime.fromisoformat(j["postedAt"])).total_seconds() / 60
+    age = f"{mins:.0f} min ago" if mins < 90 else f"{mins / 60:.0f} h ago" if mins < 48 * 60 else f"{mins / 1440:.0f} days ago"
+    yrs = f"{j['years']}+ yrs asked" if j.get("years") else "years not stated"
+    pay = f"~{j['payLakh']}L" if j.get("payLakh") else "pay not listed"
+    lines = [f"🟢 NEW JOB · posted {age}", f"{j['title']} · {j['company']}", f"📍 {j['where']} · {yrs} · {pay}",
+             f"Source: {j['source']}" + (f" · {j['applicants']}" if j.get("applicants") else "")]
+    if j.get("stack"):
+        lines.append("Stack: " + ", ".join(j["stack"][:6]))
+    lines.append(f"🔗 {j['url']}")
+    return "\n".join(lines)
+
+
+def send_alerts(jobs, prime=False):
+    """Alert each job once. prime=True marks jobs as alerted without sending (first run, no flood)."""
+    with db() as con:
+        done = {r["id"] for r in con.execute("SELECT id FROM alerts")}
+    new = [j for j in jobs if j["id"] not in done]
+    sent = 0
+    if not prime and new and TG_TOKEN and TG_CHAT:
+        for j in new[:MAX_ALERTS]:
+            try:
+                sent += bool(tg_send(alert_text(j)))
+            except Exception as e:
+                state["error"] = f"Telegram: {e}"[:300]
+                break
+        if len(new) > MAX_ALERTS:
+            try:
+                tg_send(f"+{len(new) - MAX_ALERTS} more new jobs on the page: https://searchengine.suryadeals.com/")
+            except Exception:
+                pass
+    if prime or sent or not (TG_TOKEN and TG_CHAT):
+        now = datetime.now(timezone.utc).isoformat()
+        with db() as con:
+            con.executemany("INSERT OR IGNORE INTO alerts VALUES (?,?)", [(j["id"], now) for j in new])
+    return sent
 
 
 def last_run():
@@ -104,13 +168,19 @@ def run_collect():
         return False
     state.update(running=True, error="")
     try:
-        out = daily_jobs.collect(days=7, max_years=4)
+        slow = time.time() - state["last_slow"] >= SLOW_EVERY_S
+        with db() as con:  # no alert history yet (fresh DB or first run after this update): don't flood
+            first = con.execute("SELECT COUNT(*) FROM alerts").fetchone()[0] == 0
+        out = daily_jobs.collect(days=LOOKBACK_DAYS, slow=slow)
+        if slow:
+            state["last_slow"] = time.time()
         for j in out["kept"]:
             j["note"] = make_note(j)
             j["desc"] = j.get("desc", "")[:600]
         added = save_jobs(out["kept"])
+        alerted = send_alerts(out["kept"], prime=first)
         meta = {"at": out["runAt"], "checked": len(out["kept"]) + out["rejectedCount"], "added": added,
-                "sources": out["sources"], "errors": out["errors"][:10]}
+                "alerted": alerted, "sources": out["sources"], "errors": out["errors"][:10]}
         with db() as con:
             con.execute("INSERT INTO runs VALUES (?,?)", (meta["at"], json.dumps(meta)))
     except Exception as e:  # keep the server up; show the error on the page
@@ -121,16 +191,21 @@ def run_collect():
     return True
 
 
-def next_8am_ist(now):
-    t = now.astimezone(IST).replace(hour=8, minute=0, second=0, microsecond=0)
-    return t if t > now else t + timedelta(days=1)
+def next_run(now):
+    """Next :00 or :30 slot between 08:00 and 23:00 IST."""
+    t = now.astimezone(IST).replace(second=0, microsecond=0)
+    t = t.replace(minute=(t.minute // EVERY_MIN) * EVERY_MIN) + timedelta(minutes=EVERY_MIN)
+    if t.hour < DAY_START:
+        t = t.replace(hour=DAY_START, minute=0)
+    elif t.hour > DAY_END or (t.hour == DAY_END and t.minute > 0):
+        t = (t + timedelta(days=1)).replace(hour=DAY_START, minute=0)
+    return t
 
 
 def scheduler():
-    if not last_run():
-        run_collect()
+    run_collect()  # once at start-up (also primes alerts on a fresh database)
     while True:
-        target = next_8am_ist(datetime.now(timezone.utc))
+        target = next_run(datetime.now(timezone.utc))
         # Check the wall clock every 5 min: one long sleep woke an hour late on the VM.
         while (left := (target - datetime.now(timezone.utc)).total_seconds()) > 0:
             time.sleep(min(300, left))
@@ -225,12 +300,30 @@ def set_marks(ids, status):
 def _selfcheck():
     job = {"company": "Acme", "title": "AI Engineer", "stack": ["python", "fastapi", "llm"], "desc": ""}
     n = make_note(job)
-    assert "3+ years" in n and "650 ms" in n and "Acme" in n
+    assert "3+ years" not in n and "650 ms" in n and "Acme" in n
     job = {"company": "Shop", "title": "Full Stack Developer", "stack": ["react", "nodejs"], "desc": "payments with stripe"}
     n = make_note(job)
     assert "156 REST" in n and "Razorpay" in n
-    assert next_8am_ist(datetime(2026, 10, 26, 1, 0, tzinfo=timezone.utc)).hour == 8
-    assert next_8am_ist(datetime(2026, 10, 26, 3, 0, tzinfo=timezone.utc)).day == 27
+    ist = lambda h, m, d=12: datetime(2026, 11, d, h, m, tzinfo=IST)
+    assert next_run(ist(7, 10)) == ist(8, 0)
+    assert next_run(ist(8, 0)) == ist(8, 30)
+    assert next_run(ist(10, 29)) == ist(10, 30)
+    assert next_run(ist(22, 45)) == ist(23, 0)
+    assert next_run(ist(23, 0)) == ist(8, 0, 13)
+    assert next_run(ist(23, 50)) == ist(8, 0, 13)
+    j = {"id": "x", "title": "Full Stack Developer", "company": "Roche", "where": "Hyderabad", "years": 1,
+         "payLakh": None, "source": "LinkedIn", "applicants": "47 applicants", "stack": ["react", "python"],
+         "url": "https://www.linkedin.com/jobs/view/1/", "postedAt": (datetime.now(timezone.utc) - timedelta(minutes=18)).isoformat()}
+    t = alert_text(j)
+    assert "posted 18 min ago" in t and "Roche" in t and "1+ yrs asked" in t and "47 applicants" in t and t.endswith("/1/")
+    # alerts: prime marks without sending; a job is never alerted twice
+    global DB_PATH
+    import tempfile
+    DB_PATH = Path(tempfile.mkdtemp()) / "t.db"; init_db()
+    assert send_alerts([j], prime=True) == 0
+    with db() as con:
+        assert con.execute("SELECT COUNT(*) FROM alerts").fetchone()[0] == 1
+    assert send_alerts([j]) == 0  # already alerted
 
 
 if __name__ == "__main__":
@@ -239,5 +332,12 @@ if __name__ == "__main__":
     elif "--mark" in sys.argv:  # --mark applied|skipped id1,id2,...
         i = sys.argv.index("--mark")
         set_marks(sys.argv[i + 2].split(","), sys.argv[i + 1])
+    elif "--telegram-chat-id" in sys.argv:  # press Start in the bot first
+        with urlopen(f"https://api.telegram.org/bot{TG_TOKEN}/getUpdates", timeout=20) as r:
+            ids = {u["message"]["chat"]["id"] for u in json.load(r).get("result", []) if "message" in u}
+        print("Chat id(s):", ", ".join(map(str, ids)) or "none: open the bot in Telegram, press Start, try again")
+    elif "--telegram-test" in sys.argv:
+        print("sent" if tg_send("✅ Suryadeals Power Engine: Telegram alerts are working.") else
+              "not sent: check TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID")
     elif "--selfcheck" in sys.argv:
         _selfcheck(); print("selfcheck ok")

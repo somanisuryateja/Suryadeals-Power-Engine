@@ -6,19 +6,35 @@ Most job boards show reposts, region-locked "remote" roles and listings that wer
 
 ## What it does
 
-Every day at 8:00 AM IST, and on demand from the page (at most once per 15 minutes):
+Every 30 minutes from 8:00 AM to 11:00 PM IST, and on demand from the page (at most once per 15 minutes):
 
-1. **Collects** from about 105 company job boards through their public APIs (Greenhouse, Lever, Ashby, SmartRecruiters), the Himalayas remote-jobs search filtered to India, and the current Hacker News "Who is hiring" thread.
-2. **Checks** each job:
-   - Posting date comes from the company's own applicant tracking system, never from an aggregator.
-   - Location must be Hyderabad, or remote and open to India / APAC / worldwide.
-   - The description is scanned for hidden region locks ("EU/LATAM only", "US work authorization").
-   - Title filters drop Senior/Staff/Lead, interns, and stacks outside React / Node / TypeScript / Python.
-   - Experience asked is parsed from the description; anything over 4 years is dropped.
-   - Shown pay is converted to lakh INR; anything under ₹10 LPA is dropped and ₹25 LPA+ is flagged.
-   - Gigs, outsourcing shops and data-labelling work are dropped.
-3. **Stores** the jobs in SQLite with a short application note drafted for each one.
-4. **Serves** one page where each job can be opened, its note copied, and marked applied or skipped. Old jobs are pruned after 21 days unless marked.
+1. **Collects** jobs posted in the last 2 days from:
+   - about 104 company job boards through their public APIs (Greenhouse, Lever, Ashby, SmartRecruiters);
+   - **Workday** career sites of large companies (NVIDIA, Salesforce, Adobe, Walmart, Intel, Novartis…), searched for Hyderabad and remote India;
+   - **LinkedIn public job search** (logged out, no account): 4 searches per run, rotated, pausing 2 h if rate-limited;
+   - every 3 hours: Himalayas (remote, India) and the Hacker News "Who is hiring" thread.
+2. **Checks** each job against Surya's rules: Hyderabad or remote open to India; React / Node / TypeScript / Python stack;
+   minimum experience asked **3 years or less**; no Lead/Staff/Principal/Manager titles, and "Senior" only when the JD asks ≤3 years;
+   pay, when shown, **above ₹12 LPA**; no region-locked "remote", gigs or data-labelling work.
+3. **Stores** them in SQLite with a short application note; the page shows the last 7 days.
+4. **Alerts on Telegram** once per new job (title, company, location, years asked, pay, source, applicants, link).
+   The first run after deploy only records existing jobs, so it never floods the chat.
+
+## Telegram setup
+
+1. In Telegram open **@BotFather** → `/newbot` → copy the token. Open your new bot and press **Start**.
+2. On the server: `sudo nano /etc/power-engine.env` and add `TELEGRAM_BOT_TOKEN=...`
+3. `cd /opt/power-engine && set -a && . /etc/power-engine.env && set +a && venv/bin/python -m app.main --telegram-chat-id`
+   → add `TELEGRAM_CHAT_ID=...` to the same file.
+4. `sudo systemctl restart power-engine`, then `venv/bin/python -m app.main --telegram-test`.
+
+## Checking that it works
+
+```bash
+python engine/daily_jobs.py --selfcheck && python -m app.main --selfcheck   # rules and parsers
+ENGINE_NO_SCHEDULER=1 python test_offline.py                              # full run with fake sources
+python engine/daily_jobs.py --probe                                       # live: which sources answer from this machine
+```
 
 ## Stack
 
@@ -39,8 +55,11 @@ Set `ENGINE_SIGNATURE` to add a contact line under each note. Personal details l
 
 ```
 engine/job_scanner.py   company job-board readers + title/location filters
-engine/daily_jobs.py    all sources + checks -> one list of verified jobs
-app/main.py             FastAPI: storage, daily schedule, refresh, notes
+engine/daily_jobs.py    all sources + checks -> one list of verified jobs; --probe
+engine/linkedin.py      LinkedIn public search (no login)
+engine/workday.py       Workday career sites
+test_offline.py         end-to-end test with fake sources
+app/main.py             FastAPI: storage, 30-min schedule, Telegram alerts, refresh, notes
 app/static/index.html   the page
 deploy/deploy.sh        server setup: venv, systemd, nginx, certbot
 ```

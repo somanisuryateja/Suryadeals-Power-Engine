@@ -18,9 +18,9 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 try:
-    from engine import job_scanner as js
+    from engine import job_scanner as js, linkedin, workday
 except ImportError:  # run as a script from this folder
-    import job_scanner as js
+    import job_scanner as js, linkedin, workday
 
 HERE = Path(__file__).parent
 USD_INR = 84  # ponytail: fixed rate, only used to flag 25L+ pay
@@ -34,6 +34,10 @@ REGION_LOCK = re.compile(
 BAD_STACK = re.compile(r"\b(java|spring boot|\.net|c#|php|laravel|ruby on rails|golang|elixir|scala|kotlin|swift)\b", re.I)
 BAD_TITLE = re.compile(r"react native|part[- ]time|equity only|unpaid|devrel|developer relations|commission|offshore", re.I)
 # Gigs, outsourcing shops and data-labelling work that slipped through by title.
+SENIOR = re.compile(r"\bsenior\b|\bsr\.?\b", re.I)
+# Surya's rules (JOB_RULES_FINAL.md): min experience asked <= 3 yrs, pay above 12 LPA when shown.
+MAX_YEARS = 3
+PAY_FLOOR_LAKH = 12
 BAD_DESC = re.compile(r"\boutsourcing\b|fixed price|paid on completion|data annotation|data labell?ing|equity[- ]only", re.I)
 HIMALAYAS_QUERIES = ["full stack", "node", "react", "typescript", "fastapi", "python backend", "ai engineer", "mern"]
 
@@ -65,7 +69,7 @@ def pay_inr_lakh(text):
     return round(usd * USD_INR / 1e5, 1)
 
 
-def check_text(job, max_years):
+def check_text(job, max_years=MAX_YEARS, pay_floor=PAY_FLOOR_LAKH):
     """Shared checks on the job text. Returns a reason string if rejected."""
     d = job.get("desc") or ""
     if REGION_LOCK.search(d):
@@ -77,12 +81,14 @@ def check_text(job, max_years):
     if BAD_DESC.search(d):
         return "not a fit: " + BAD_DESC.search(d).group(0)
     lakh = pay_inr_lakh(job.get("pay"))
-    if lakh is not None and lakh < 10:
-        return f"pay about {lakh}L, under your 10L floor"
+    if lakh is not None and lakh <= pay_floor:
+        return f"pay about {lakh}L, not above your {pay_floor}L floor"
     yrs = js.years_required(d)
     job["yrs"] = yrs
     if yrs and yrs > max_years:
         return f"asks {yrs}+ years"
+    if SENIOR.search(job["title"]) and not yrs:
+        return "senior title and years not stated"
     job["stack"] = sorted({m.lower().replace(".", "") for m in js.MY_STACK.findall(d)})
     if d and not job["stack"]:
         return "too little of your stack in the description"
@@ -167,13 +173,31 @@ def from_hn(days, now):
     return out
 
 
-def collect(days=7, max_years=4):
-    """Run every source and checks; return the run as a dict."""
+def from_linkedin(days, now):
+    got, errs = linkedin.collect(js.keep, now)
+    return [j for j in got if (now - j["posted"]).total_seconds() <= days * 86400], errs
+
+
+def from_workday(days, now):
+    return workday.collect(js.keep, max_days=max(1, round(days)), now=now)
+
+
+def collect(days=2, max_years=MAX_YEARS, slow=True):
+    """Run every source and checks; return the run as a dict.
+    slow=False skips Himalayas and HN (heavy, slow-changing) on the frequent runs."""
     now = datetime.now(timezone.utc)
     boards, n_boards, errors = from_boards(days, now)
     counts = {"Company job boards": len(boards)}
     jobs = list(boards)
-    for name, fn in [("Himalayas", from_himalayas), ("HN Who is hiring", from_hn)]:
+    for name, fn in [("LinkedIn", from_linkedin), ("Workday", from_workday)]:
+        try:
+            got, errs = fn(days, now)
+            errors += errs
+        except Exception as e:
+            got, errors = [], errors + [f"{name}: {e}"]
+        counts[name] = len(got)
+        jobs += got
+    for name, fn in [("Himalayas", from_himalayas), ("HN Who is hiring", from_hn)] if slow else []:
         try:
             got = fn(days, now)
         except Exception as e:
@@ -198,16 +222,41 @@ def collect(days=7, max_years=4):
                      "where": j["where"], "loc": (j.get("loc") or "")[:120], "postedAt": j["posted"].isoformat(),
                      "years": j.get("yrs"), "stack": j.get("stack", []), "pay": j.get("pay") or "",
                      "payLakh": lakh, "pay25": bool(lakh and lakh >= 25), "source": j["source"],
-                     "checks": j["checks"], "hn": j.get("hn", ""), "verify": j.get("verify", ""), "desc": (j.get("desc") or "")[:1500]})
+                     "checks": j["checks"], "hn": j.get("hn", ""), "applicants": j.get("applicants", ""), "verify": j.get("verify", ""), "desc": (j.get("desc") or "")[:1500]})
     kept.sort(key=lambda j: (not j["pay25"], -datetime.fromisoformat(j["postedAt"]).timestamp()))
-    return {"runAt": now.isoformat(), "days": days, "companiesChecked": n_boards, "sources": counts,
+    return {"runAt": now.isoformat(), "days": days, "companiesChecked": n_boards + len(workday.SITES), "sources": counts,
             "kept": kept, "rejectedCount": len(rejected), "rejectedSample": rejected[:40], "errors": errors[:40]}
+
+
+def probe():
+    """Live check of every source, one small request each. Run on the server after deploy."""
+    print("Company job boards:")
+    for ats, slugs in js.COMPANIES.items():
+        for s in slugs:
+            found, err = js.scan(ats, s)
+            print(f"  {'FAIL' if err else 'ok  '}  {ats:15} {s:28} {err or str(len(found)) + ' jobs'}")
+    print("Workday:")
+    workday.probe()
+    print("LinkedIn (1 search):")
+    try:
+        cards = linkedin.parse_cards(linkedin._get("https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?" +
+                                     urlencode({"keywords": "react node", "location": "Hyderabad, Telangana, India",
+                                                "f_TPR": "r86400", "sortBy": "DD"})), datetime.now(timezone.utc))
+        print(f"  ok    LinkedIn returned {len(cards)} jobs from the last 24 h")
+    except Exception as e:
+        print(f"  FAIL  LinkedIn: {e}")
+    for name, url in [("Himalayas", "https://himalayas.app/jobs/api/search?q=react&country=India"),
+                      ("HN", "https://hn.algolia.com/api/v1/search_by_date?tags=story,author_whoishiring&hitsPerPage=1")]:
+        try:
+            js.get_json(url); print(f"  ok    {name}")
+        except Exception as e:
+            print(f"  FAIL  {name}: {e}")
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--days", type=float, default=7)
-    ap.add_argument("--max-years", type=int, default=4)
+    ap.add_argument("--days", type=float, default=2)
+    ap.add_argument("--max-years", type=int, default=MAX_YEARS)
     args = ap.parse_args()
     out = collect(args.days, args.max_years)
     (HERE / "jobs_today.json").write_text(json.dumps(out, indent=1), encoding="utf-8")
@@ -222,17 +271,26 @@ def _selfcheck():
     assert pay_inr_lakh("INR 1200000-1700000/annual") == 12.0
     assert pay_inr_lakh("") is None
     j = {"title": "Backend Engineer", "desc": "Remote - available across all EU/LATAM countries. Python, React."}
+    linkedin._selfcheck(); workday._selfcheck()
     assert "region" in check_text(j, 4)
     j = {"title": "Full Stack Engineer", "desc": "3+ years with React, Node.js and TypeScript. Remote India."}
     assert check_text(j, 4) is None and j["yrs"] == 3
     j = {"title": "Full Stack Engineer", "desc": "6+ years React, Node.js"}
     assert check_text(j, 4) == "asks 6+ years"
     assert "floor" in check_text({"title": "Python Developer", "desc": "python fastapi", "pay": "INR 400000-600000 annual"}, 4)
+    assert "floor" in check_text({"title": "Python Developer", "desc": "python fastapi", "pay": "INR 1100000-1200000 annual"})
+    assert check_text({"title": "Python Developer", "desc": "python fastapi", "pay": "INR 1400000-1800000 annual"}) is None
+    assert check_text({"title": "Full Stack Engineer", "desc": "4+ years React"}) == "asks 4+ years"
+    assert check_text({"title": "Full Stack Engineer", "desc": "3+ years React"}) is None
+    assert check_text({"title": "Senior Software Engineer", "desc": "React, Node"}) == "senior title and years not stated"
+    assert check_text({"title": "Senior Software Engineer 2", "desc": "1-3 years React, Node"}) is None
     assert "not a fit" in check_text({"title": "AI Engineer - Equity Only", "desc": "python"}, 4)
 
 
 if __name__ == "__main__":
     if "--selfcheck" in sys.argv:
         _selfcheck(); print("selfcheck ok")
+    elif "--probe" in sys.argv:
+        probe()
     else:
         main()

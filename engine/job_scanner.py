@@ -24,7 +24,7 @@ COMPANIES = {
         razorpaysoftwareprivatelimited reddit roblox samsara schrdinger singlestore sofi stripe
         twilio udemy utilityprofit vercel yugabyte zetaglobal zscaler scaleai""".split(),
     "lever": "gohighlevel cred hevodata mindtickle paytm spotify supermove zeta palantir".split(),
-    "ashby": """livekit tempo reacher outmarket sarvam smallest supabase railway bureau atlan
+    "ashby": """livekit reacher outmarket sarvam smallest supabase railway bureau atlan
         composio cursor deepgram elevenlabs harvey openai notion redis runpod lambda anyscale neon
         openrouter temporal writer zapier posthog n8n langchain linear vapi replit render mintlify
         resend modal cartesia bland""".split(),
@@ -34,7 +34,7 @@ COMPANIES = {
 # --- filters -------------------------------------------------------------
 TITLE_OK = re.compile(r"engineer|developer|\bsde\b|full[\s-]?stack|backend|back-end|front[\s-]?end|software|programmer", re.I)
 TITLE_BAD = re.compile(
-    r"senior|\bsr\.?\b|staff|principal|lead|manager|director|head|architect|\bvp\b|\biii\b|\biv\b|\bl[4-9]\b|"
+    r"staff|principal|lead|manager|director|head|architect|\bvp\b|\biii\b|\biv\b|\bl[4-9]\b|"
     r"intern|apprentice|java\b(?!script)|\.net|c#|c\+\+|golang|\bgo\b|rust|scala|kotlin|swift|android|ios|"
     r"salesforce|\bsap\b|data engineer|analytics|\bsre\b|reliability|devops|security|network|embedded|firmware|"
     r"hardware|\bqa\b|test|sdet|support|sales|solutions|research|scientist|machine learning engineer|ml engineer|"
@@ -226,7 +226,8 @@ def _selfcheck():
     assert location_ok("Remote - US") is None
     assert location_ok("Bengaluru, India") is None
     assert keep({"title": "Software Engineer II", "loc": "Hyderabad"})
-    assert not keep({"title": "Senior Software Engineer", "loc": "Hyderabad"})
+    assert keep({"title": "Senior Software Engineer", "loc": "Hyderabad"})  # judged by years in daily_jobs
+    assert not keep({"title": "Lead Software Engineer", "loc": "Hyderabad"})
     assert not keep({"title": "Java Developer", "loc": "Hyderabad"})
     assert keep({"title": "Full Stack Engineer (JavaScript)", "loc": "Remote, India"})
     assert years_required("3-5 years of experience; company founded 30 years ago") == 3
