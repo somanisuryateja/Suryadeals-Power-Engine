@@ -86,6 +86,13 @@ m.run_collect()                      # third run: nothing new, nothing sent
 assert len(sent) == 1
 run = m.last_run()
 assert run["sources"]["LinkedIn"] == 1 and run["sources"]["Workday"] == 1 and run["alerted"] == 0
+# a job older than the look-back is dropped in collect(), whatever the source: not saved, counted or alerted
+old, _ = dj.from_workday(2, now)
+old = [dict(old[0], url="https://wd/old", posted=now - timedelta(days=10), checks=[])]
+real_wd, dj.from_workday = dj.from_workday, lambda days, now: (old, [])
+m.run_collect()
+dj.from_workday = real_wd
+assert m.last_run()["added"] == 0 and len(sent) == 1, (m.last_run(), sent)
 note = next(j for j in m.jobs()["jobs"] if j["company"] == "Roche")["note"]
 assert "3+ years" not in note and "Roche" in note
 

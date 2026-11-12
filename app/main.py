@@ -14,6 +14,7 @@ Import jobs:  python -m app.main --import DIR   (DIR of <id>.json job files)
 Mark jobs:    python -m app.main --mark skipped id1,id2
 """
 import json, os, sqlite3, sys, threading, time
+from contextlib import asynccontextmanager
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from datetime import datetime, timedelta, timezone
@@ -39,7 +40,13 @@ MAX_ALERTS = 15                  # per run; more are summarised in one message
 TG_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TG_CHAT = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-app = FastAPI(title="Suryadeals Power Engine")
+@asynccontextmanager
+async def lifespan(_app):
+    startup()
+    yield
+
+
+app = FastAPI(title="Suryadeals Power Engine", lifespan=lifespan)
 run_lock = threading.Lock()
 
 
@@ -212,7 +219,6 @@ def scheduler():
         run_collect()
 
 
-@app.on_event("startup")
 def startup():
     init_db()
     if "pytest" not in sys.modules and os.environ.get("ENGINE_NO_SCHEDULER") != "1":

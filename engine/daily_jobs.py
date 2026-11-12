@@ -157,7 +157,7 @@ def from_hn(days, now):
     for c in item.get("children", []):
         t = strip(c.get("text"))
         posted = js.iso(c["created_at"])
-        if not t or (now - posted).total_seconds() > max(days, 14) * 86400:  # monthly thread
+        if not t or (now - posted).total_seconds() > days * 86400:
             continue
         head = t.split("|")
         if len(head) < 3 or not re.search(r"\b(india|worldwide|anywhere|apac|asia)\b", t[:400], re.I):
@@ -211,7 +211,9 @@ def collect(days=2, max_years=MAX_YEARS, slow=True):
         if key in seen:
             continue
         seen.add(key)
-        why = check_text(j, max_years)
+        # one gate for every source: older jobs would be saved, then pruned, yet still alerted
+        why = "older than the look-back" if (now - j["posted"]).total_seconds() > days * 86400 \
+            else check_text(j, max_years)
         if why:
             rejected.append(f"{j['company']} | {j['title']}: {why}")
             continue

@@ -24,9 +24,9 @@ Every 30 minutes from 8:00 AM to 11:00 PM IST, and on demand from the page (at m
 
 1. In Telegram open **@BotFather** → `/newbot` → copy the token. Open your new bot and press **Start**.
 2. On the server: `sudo nano /etc/power-engine.env` and add `TELEGRAM_BOT_TOKEN=...`
-3. `cd /opt/power-engine && set -a && . /etc/power-engine.env && set +a && venv/bin/python -m app.main --telegram-chat-id`
-   → add `TELEGRAM_CHAT_ID=...` to the same file.
-4. `sudo systemctl restart power-engine`, then `venv/bin/python -m app.main --telegram-test`.
+3. `cd /opt/power-engine && export $(sudo grep ^TELEGRAM_ /etc/power-engine.env | xargs) && venv/bin/python -m app.main --telegram-chat-id`
+   → add `TELEGRAM_CHAT_ID=...` to the same file. (The file is root-only, mode 600, so read it with `sudo`.)
+4. `sudo systemctl restart power-engine`, then in the same way: `export $(sudo grep ^TELEGRAM_ /etc/power-engine.env | xargs) && venv/bin/python -m app.main --telegram-test`.
 
 ## Checking that it works
 
