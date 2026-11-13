@@ -39,6 +39,34 @@ SENIOR = re.compile(r"\bsenior\b|\bsr\.?\b", re.I)
 MAX_YEARS = 3
 PAY_FLOOR_LAKH = 12
 BAD_DESC = re.compile(r"\boutsourcing\b|fixed price|paid on completion|data annotation|data labell?ing|equity[- ]only", re.I)
+# A "remote" search hit whose JD pins the job to an office in another city (LinkedIn's remote filter is loose).
+OTHER_CITY = (r"bengaluru|bangalore|pune|gurgaon|gurugram|noida|delhi|ncr|mumbai|chennai|kolkata|mohali|chandigarh|"
+              r"ahmedabad|jaipur|indore|kochi|coimbatore|trivandrum|thiruvananthapuram|nagpur|lucknow|bhubaneswar")
+ONSITE_ELSEWHERE = re.compile(r"(?:on-?site|in-office|work from (?:the |our )?office|based in|work from|relocate to|"
+                              r"location\s*:)[^.]{0,60}?\b(" + OTHER_CITY + r")\b", re.I)
+# Job boards that re-post someone else's listing (apply at the source instead), or re-dated old ones.
+REPOST = re.compile(r"\bis the employer\b|\bjob radar\b|we track this posting|originally posted on", re.I)
+# QA / testing roles that get past the title filter ("Automation Engineer"): by title, or by the JD's opening line.
+QA_TITLE = re.compile(r"\bqa\b|quality assurance|\bsdet\b|test automation|automation test", re.I)
+QA_HIRE = re.compile(r"(?:looking for|hiring|seeking)\s+an?\s+(?:[\w-]+\s+){0,3}?(?:qa|quality assurance|test|testing|sdet)\b", re.I)
+# Stack words that only count as "alternatives" when the sentence offers a choice.
+STACK_CHOICE = re.compile(r"e\.g|such as|for example|one or more|at least one|any of|\blike\b|nice to have|\bplus\b|"
+                          r"bonus|preferred|\bor\b(?! (?:a |any )?similar| equivalent)", re.I)
+# People posting themselves in the HN hiring thread ("I'm a software engineer...") rather than a job.
+JOB_SEEKER = re.compile(r"\b(?:i'?m|i am)\s+an?\s+(?:[\w-]+\s+){0,3}?(?:engineer|developer|programmer)\b|"
+                        r"looking for (?:a |my next )?(?:new )?(?:role|job|position|opportunit)|open to (?:work|opportunit)|"
+                        r"\bhire me\b|my (?:resume|cv)\b", re.I)
+SENTENCE_END = re.compile(r"(?<!e\.g)(?<!i\.e)[.!?]\s+(?=[A-Z0-9])|[•;\n]")
+
+
+def required_bad_stack(d):
+    """Java / .NET / PHP ... named as a requirement, not as one option among several."""
+    for m in BAD_STACK.finditer(d):
+        start = max([e.end() for e in SENTENCE_END.finditer(d, 0, m.start())] + [m.start() - 100, 0])
+        end = min([e.start() for e in [SENTENCE_END.search(d, m.end())] if e] + [m.end() + 100])
+        if not STACK_CHOICE.search(d[start:end]):
+            return m.group(0)
+    return None
 
 
 def job_id(url):
@@ -81,6 +109,18 @@ def pay_inr_lakh(text):
 def check_text(job, max_years=MAX_YEARS, pay_floor=PAY_FLOOR_LAKH):
     """Shared checks on the job text. Returns a reason string if rejected."""
     d = job.get("desc") or ""
+    if not d.strip():  # e.g. LinkedIn refused the job page: nothing to check years or stack against
+        return "no job description to check (retried on a later run)"
+    if REPOST.search(d):
+        return "re-posted by a job board: " + REPOST.search(d).group(0)
+    if QA_TITLE.search(job["title"]) or QA_HIRE.search(d[:300]):
+        return "QA / testing role"
+    m = ONSITE_ELSEWHERE.search(d)
+    if m and job.get("where") != "Hyderabad" and not re.search(r"hyderabad|\bremote\b", d, re.I):
+        return f"office job in {m.group(1).title()}"
+    bad = required_bad_stack(d)
+    if bad:
+        return f"needs {bad}"
     if REGION_LOCK.search(d):
         return "locked to another region: " + REGION_LOCK.search(d).group(0)
     if BAD_STACK.search(job["title"]):
@@ -99,7 +139,7 @@ def check_text(job, max_years=MAX_YEARS, pay_floor=PAY_FLOOR_LAKH):
     if SENIOR.search(job["title"]) and not yrs:
         return "senior title and years not stated"
     job["stack"] = sorted({m.lower().replace(".", "") for m in js.MY_STACK.findall(d)})
-    if d and not job["stack"]:
+    if not job["stack"]:
         return "too little of your stack in the description"
     return None
 
@@ -133,7 +173,7 @@ def from_hn(days, now):
         if not t or (now - posted).total_seconds() > days * 86400:
             continue
         head = t.split("|")
-        if len(head) < 3 or not re.search(r"\b(india|apac|asia|hyderabad)\b", t[:400], re.I):
+        if len(head) < 3 or not re.search(r"\b(india|apac|asia|hyderabad)\b", t[:400], re.I) or JOB_SEEKER.search(t[:300]):
             continue
         if not js.MY_STACK.search(t) or re.search(r"\b(senior|staff|principal|lead)\b", t[:200], re.I) and not re.search(r"\bjunior|mid\b", t[:200], re.I):
             continue
@@ -273,6 +313,40 @@ def _selfcheck():
     assert check_text({"title": "Senior Software Engineer", "desc": "React, Node"}) == "senior title and years not stated"
     assert check_text({"title": "Senior Software Engineer 2", "desc": "1-3 years React, Node"}) is None
     assert "not a fit" in check_text({"title": "AI Engineer - Equity Only", "desc": "python"}, 4)
+    # the six leaks found on 13 Nov, in the JDs' own words; each must be rejected...
+    bad = {
+        "no job description": {"title": "Software Engineer II", "desc": ""},  # Microsoft, LinkedIn page refused
+        "Mohali": {"title": "Full Stack Developer", "where": "Remote (India/APAC)", "desc":
+                   "Production experience with React or Next.js, and Node.js with Express. "
+                   "Location: SEVOS office, Sector 75, Mohali (onsite). Hours: Full-time"},
+        "Noida": {"title": "Software Engineer (Full Stack)", "where": "Remote (India/APAC)", "desc":
+                  "2-3 years. One frontend stack (e.g. React, Next.js) and one backend stack (e.g. Node.js, Python, Java, Go). "
+                  "Based in or willing to work from Noida (Delhi NCR)"},
+        "needs Java": {"title": "Software Engineer", "where": "Hyderabad", "desc":
+                       "2+ years of software industry experience. Expertise in fullstack engineering: HTML, CSS, "
+                       "Javascript, Java, JUnit, REST, JSON. Frontend technologies, with solid JavaScript experience"},
+        "needs Java ": {"title": "Applications Dev Engineer", "where": "Hyderabad", "desc":
+                        "on the function or industry. 2-5 years of experience with Java or a similar OO language. "
+                        "Passion for JavaScript and the Web. Experience with React"},
+        "re-posted": {"title": "Software Engineer", "where": "Hyderabad", "desc":
+                      "Servicenow is the employer — EngRadar is a job radar, not a recruiter. 2+ years JavaScript"},
+        "QA": {"title": "Automation Engineer, Senior Associate", "where": "Hyderabad", "desc":
+               "We are looking for a QA Automation Engineer with 3+ years of experience to design automated tests. Python"},
+    }
+    for want, j in bad.items():
+        got = check_text(j) or ""
+        assert want.strip() in got, (want, got)
+    # ...while these still pass: Java only offered as one choice, a city named without an office rule
+    ok = [{"title": "Software Engineer", "where": "Hyderabad", "desc":
+           "experience in at least one modern programming language (e.g., Java, Python, JavaScript, C#, or Go). REST APIs"},
+          {"title": "AI Developer", "where": "Remote (India/APAC)", "desc":
+           "our Chennai studio (ISO 27001:2022 certified) runs the production. 1-2 years with React and a Node.js backend"},
+          {"title": "Full Stack Engineer", "where": "Remote (India/APAC)", "desc":
+           "We are a team based in Bangalore hiring remote engineers across India. 3+ years React, Node.js"}]
+    for j in ok:
+        assert check_text(j) is None, (j["title"], check_text(j))
+    assert JOB_SEEKER.search("Hemant Singh | Software Engineer | India (REMOTE) I'm a software engineer focused on backend")
+    assert not JOB_SEEKER.search("Acme | Full Stack Engineer | Remote (India) | We're hiring engineers who like React")
 
 
 if __name__ == "__main__":
