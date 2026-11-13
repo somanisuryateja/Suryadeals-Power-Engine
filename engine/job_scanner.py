@@ -33,13 +33,17 @@ COMPANIES = {
 
 # --- filters -------------------------------------------------------------
 TITLE_OK = re.compile(r"engineer|developer|\bsde\b|full[\s-]?stack|backend|back-end|front[\s-]?end|software|programmer", re.I)
+# Whole words only: as substrings, "intern" hit "International", "rust" "Trust", "scala" "Escalation"/"Scalable",
+# "ios" "Portfolios", "support" "Supportability", "head" "Headless" (audit, 13 Nov).
 TITLE_BAD = re.compile(
-    r"staff|principal|lead|manager|director|head|architect|\bvp\b|\biii\b|\biv\b|\bl[4-9]\b|"
-    r"intern|apprentice|java\b(?!script)|\.net|c#|c\+\+|golang|\bgo\b|rust|scala|kotlin|swift|android|ios|"
-    r"salesforce|\bsap\b|data engineer|analytics|\bsre\b|reliability|devops|security|network|embedded|firmware|"
-    r"hardware|\bqa\b|test|sdet|support|sales|solutions|research|scientist|machine learning engineer|ml engineer|"
-    r"mobile|game|graphics|kernel|compiler|database engineer|infrastructure|"
-    r"systems? dev(?:elopment)? engineer|systems engineer", re.I)  # Amazon SysDE = infra / on-call
+    r"\b(?:staff|principal|lead(?:er)?|manager|director|head|architect|vp|iii|iv|l[4-9]|"
+    r"intern(?:ship)?s?|apprentice|java|golang|go|rust|scala|kotlin|swift|android|ios|"
+    r"salesforce|sap|data engineer(?:ing)?|analytics|sre|reliability|devops|security|network(?:ing)?|embedded|firmware|"
+    r"hardware|qa|test(?:ing)?|sdet|support|(?:pre)?sales|solutions|research|scientist|machine learning engineer(?:ing)?|"
+    r"ml engineer|mobile|game|gaming|graphics|kernel|compiler|database engineer|infrastructure|escalations?|"
+    r"systems? dev(?:elopment)? engineer|systems engineer|"  # Amazon SysDE = infra / on-call
+    r"verification|rtl|asic|vlsi|soc|cad|layout|analog|ams|silicon)\b"  # chip / hardware roles
+    r"|(?<!\w)\.net\b|\bc#|\bc\+\+", re.I)
 # Hyderabad, or explicitly open to India / APAC. "Worldwide", "global", "anywhere" don't count:
 # in practice they mean US/EU hours or a reseller board, not a team that hires in India.
 LOC_HYD = re.compile(r"hyderabad|telangana", re.I)
@@ -259,6 +263,13 @@ def _selfcheck():
     assert not keep({"title": "Lead Software Engineer", "loc": "Hyderabad"})
     assert not keep({"title": "Java Developer", "loc": "Hyderabad"})
     assert not keep({"title": "System Dev Engineer II, AFT Platform Engineering", "loc": "Hyderabad"})
+    for t in ("Backend Engineer, Internationalisation", "Software Engineer, Backend (Trust & Safety)",
+              "Software Engineer, Scalable Systems", "Software Engineer, Supportability", "Frontend Engineer, Portfolios",
+              "Full Stack Engineer (Headless CMS)", "Full Stack Engineer (JavaScript)", "Software Engineer II"):
+        assert keep({"title": t, "loc": "Hyderabad"}), t
+    for t in ("SR, Engineer - AMS Verification", "Software Engineering Internship", "Technical Escalations Engineer 2",
+              "Team Leader - Software", "Senior .NET Developer", "C++ Engineer", "Data Engineering SMTS"):
+        assert not keep({"title": t, "loc": "Hyderabad"}), t
     assert keep({"title": "Software Development Engineer II", "loc": "Hyderabad"})
     assert keep({"title": "Full Stack Engineer (JavaScript)", "loc": "Remote, India"})
     assert years_required("3-5 years of experience; company founded 30 years ago") == 3
