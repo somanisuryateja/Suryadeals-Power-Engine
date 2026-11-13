@@ -45,6 +45,25 @@ ONSITE_ELSEWHERE = re.compile(r"(?:on-?site|in-office|work from (?:the |our )?of
                               r"location\s*:)[^.]{0,60}?\b(" + OTHER_CITY + r")\b", re.I)
 # Job boards that re-post someone else's listing (apply at the source instead), or re-dated old ones.
 REPOST = re.compile(r"\bis the employer\b|\bjob radar\b|we track this posting|originally posted on", re.I)
+REPOSTER = re.compile(r"\b(joblet|engradar|jobgether|jooble|jobright|talent\.com|jobs via dice|remotive)\b", re.I)
+# Salary written in the JD itself (LinkedIn has no pay field): "Salary: up to ₹20,000/-", "CTC 6-8 LPA".
+PAY_LINE = re.compile(r"\b(?:salary|ctc|compensation|stipend|package|pay)\b[^\n]{0,100}", re.I)
+
+
+def pay_from_desc(d):
+    """Lowest pay named in the JD, in lakh/yr; None if none. Rupee figures under 1 lakh are monthly."""
+    for m in PAY_LINE.finditer(d):
+        s = m.group(0).replace(",", "")
+        lpa = re.search(r"(\d+(?:\.\d+)?)\s*(?:(?:-|–|to)\s*\d+(?:\.\d+)?\s*)?(?:lpa|lakhs?|lacs?)\b", s, re.I)
+        if lpa:
+            return float(lpa.group(1))
+        inr = re.search(r"(?:₹|\binr|\brs\.?)\s*(\d+(?:\.\d+)?)", s, re.I)
+        if inr:
+            v = float(inr.group(1))
+            return round((v * 12 if v < 1e5 else v) / 1e5, 1)
+        if "$" in s:
+            return pay_inr_lakh(s)
+    return None
 # QA / testing roles that get past the title filter ("Automation Engineer"): by title, or by the JD's opening line.
 QA_TITLE = re.compile(r"\bqa\b|quality assurance|\bsdet\b|test automation|automation test", re.I)
 QA_HIRE = re.compile(r"(?:looking for|hiring|seeking)\s+an?\s+(?:[\w-]+\s+){0,3}?(?:qa|quality assurance|test|testing|sdet)\b", re.I)
@@ -110,8 +129,8 @@ def check_text(job, max_years=MAX_YEARS, pay_floor=PAY_FLOOR_LAKH):
     d = job.get("desc") or ""
     if not d.strip():  # e.g. LinkedIn refused the job page: nothing to check years or stack against
         return "no job description to check (retried on a later run)"
-    if REPOST.search(d):
-        return "re-posted by a job board: " + REPOST.search(d).group(0)
+    if REPOST.search(d) or REPOSTER.search(job.get("company") or ""):
+        return "re-posted by a job board: " + (REPOST.search(d) or REPOSTER.search(job["company"])).group(0)
     if QA_TITLE.search(job["title"]) or QA_HIRE.search(d[:300]):
         return "QA / testing role"
     m = ONSITE_ELSEWHERE.search(d)
@@ -129,6 +148,8 @@ def check_text(job, max_years=MAX_YEARS, pay_floor=PAY_FLOOR_LAKH):
     if BAD_DESC.search(d):
         return "not a fit: " + BAD_DESC.search(d).group(0)
     lakh = pay_inr_lakh(job.get("pay"))
+    if lakh is None:
+        lakh = pay_from_desc(d)
     if lakh is not None and lakh <= pay_floor:
         return f"pay about {lakh}L, not above your {pay_floor}L floor"
     yrs = js.years_required(d)
@@ -350,6 +371,14 @@ def _selfcheck():
           "<li>2-5 years of experience with Java or a similar OO language</li><li>Passion for JavaScript and React</li></ul>")
     assert check_text({"title": "Applications Dev Engineer", "where": "Hyderabad", "desc": js.html_text(sr)}) == "needs Java"
     assert js.html_text("&lt;p&gt;React &amp;amp; Node&lt;/p&gt;&lt;p&gt;Remote&lt;/p&gt;") == "React & Node\nRemote"
+    # pay written in the JD (Talent to Job, 13 Nov) and known re-posting boards (Joblet-AI re-posting micro1)
+    tj = "Location: Remote\nSalary: Performance-Based, up to ₹20,000/-\nBuild apps with React and Node.js"
+    assert "floor" in check_text({"title": "FULL STACK WEB DEVELOPER", "where": "Remote (India/APAC)", "desc": tj})
+    assert pay_from_desc("CTC: 6-8 LPA") == 6 and pay_from_desc("Compensation: INR 18,00,000 - 24,00,000") == 18
+    assert pay_from_desc("Integrations with Razorpay and Stripe payment gateways, React") is None
+    assert "re-posted" in check_text({"title": "Fullstack Software Engineer (Remote)", "company": "Joblet-AI",
+                                      "where": "Remote (India/APAC)", "desc": "React, Node.js, 2+ years"})
+    assert check_text({"title": "Full Stack Engineer", "where": "Hyderabad", "desc": "CTC 18-25 LPA. 3+ years React, Node.js"}) is None
     assert JOB_SEEKER.search("Hemant Singh | Software Engineer | India (REMOTE) I'm a software engineer focused on backend")
     assert not JOB_SEEKER.search("Acme | Full Stack Engineer | Remote (India) | We're hiring engineers who like React")
 

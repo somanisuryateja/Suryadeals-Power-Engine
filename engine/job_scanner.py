@@ -38,7 +38,8 @@ TITLE_BAD = re.compile(
     r"intern|apprentice|java\b(?!script)|\.net|c#|c\+\+|golang|\bgo\b|rust|scala|kotlin|swift|android|ios|"
     r"salesforce|\bsap\b|data engineer|analytics|\bsre\b|reliability|devops|security|network|embedded|firmware|"
     r"hardware|\bqa\b|test|sdet|support|sales|solutions|research|scientist|machine learning engineer|ml engineer|"
-    r"mobile|game|graphics|kernel|compiler|database engineer|infrastructure", re.I)
+    r"mobile|game|graphics|kernel|compiler|database engineer|infrastructure|"
+    r"systems? dev(?:elopment)? engineer|systems engineer", re.I)  # Amazon SysDE = infra / on-call
 # Hyderabad, or explicitly open to India / APAC. "Worldwide", "global", "anywhere" don't count:
 # in practice they mean US/EU hours or a reseller board, not a team that hires in India.
 LOC_HYD = re.compile(r"hyderabad|telangana", re.I)
@@ -257,6 +258,8 @@ def _selfcheck():
     assert keep({"title": "Senior Software Engineer", "loc": "Hyderabad"})  # judged by years in daily_jobs
     assert not keep({"title": "Lead Software Engineer", "loc": "Hyderabad"})
     assert not keep({"title": "Java Developer", "loc": "Hyderabad"})
+    assert not keep({"title": "System Dev Engineer II, AFT Platform Engineering", "loc": "Hyderabad"})
+    assert keep({"title": "Software Development Engineer II", "loc": "Hyderabad"})
     assert keep({"title": "Full Stack Engineer (JavaScript)", "loc": "Remote, India"})
     assert years_required("3-5 years of experience; company founded 30 years ago") == 3
     assert years_required("2+ years React, 6+ years overall") == 6
