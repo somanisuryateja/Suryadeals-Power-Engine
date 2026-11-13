@@ -251,7 +251,8 @@ def jobs():
     items = [json.loads(r["body"]) for r in rows]
     for j in items:
         j.pop("desc", None)
-    return {"jobs": items, "marks": marks, "lastRun": last_run(), "running": state["running"], "error": state["error"]}
+    return {"jobs": items, "marks": marks, "lastRun": last_run(), "running": state["running"], "error": state["error"],
+            "nextRun": next_run(datetime.now(timezone.utc)).isoformat(), "refreshGapMin": REFRESH_GAP // 60}
 
 
 @app.post("/api/jobs/{job_id}/mark")

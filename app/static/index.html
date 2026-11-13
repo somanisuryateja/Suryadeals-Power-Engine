@@ -70,14 +70,26 @@ summary { cursor: pointer; font-weight: 500; font-size: 14px }
 .status { font: 500 13px var(--mono); color: var(--good) }
 .empty { background: var(--surface); border: 1px dashed var(--line); border-radius: 10px; padding: 28px; text-align: center; color: var(--muted) }
 .empty h2 { font: 600 20px var(--display); color: var(--ink); margin: 0 0 6px }
+.next { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; font-size: 14px }
+.next b { font: 600 15px var(--mono); font-variant-numeric: tabular-nums }
+.filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: -6px 0 14px }
+.filters input[type="search"], .filters select { font: 14px var(--body); color: var(--ink); background: var(--surface);
+  border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; min-width: 0 }
+.filters input[type="search"] { flex: 1 1 220px }
+.filters select { flex: 0 1 auto; max-width: 100% }
+.filters label { display: flex; gap: 6px; align-items: center; font-size: 14px; color: var(--muted); white-space: nowrap }
+.shown { font-size: 13px; color: var(--muted); margin: 0 0 10px }
+.btn:disabled { opacity: .55; cursor: not-allowed }
+[hidden] { display: none !important }
 @media (prefers-reduced-motion: no-preference) { .card { transition: opacity .2s } }
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
-    <h1>Morning Jobs</h1>
-    <p class="sub">Fresh roles for Hyderabad or remote India, each checked at its source. Apply on the company page, then tick it here.</p>
+    <h1>Job Feed</h1>
+    <p class="sub">Fresh roles for Hyderabad or remote India, each checked at its source. Searches every 30 minutes, 8 AM – 11 PM IST. Apply on the company page, then tick it here.</p>
+    <div class="next" id="next" aria-live="polite"></div>
     <div class="runrow">
       <div class="run" id="run">Loading…</div>
       <button class="btn" type="button" id="refresh">Search now</button>
@@ -85,12 +97,26 @@ summary { cursor: pointer; font-weight: 500; font-size: 14px }
     <div class="msg" id="msg" hidden></div>
   </header>
 
-  <div class="bar" role="toolbar" aria-label="Filter jobs">
+  <div class="bar" role="toolbar" aria-label="Job lists">
     <button class="tab" id="tab-new" data-view="new" aria-pressed="true">To apply <span id="n-new"></span></button>
     <button class="tab" id="tab-applied" data-view="applied" aria-pressed="false">Applied <span id="n-applied"></span></button>
     <button class="tab" id="tab-skipped" data-view="skipped" aria-pressed="false">Skipped <span id="n-skipped"></span></button>
-    <label class="toggle"><input type="checkbox" id="only25"> ₹25L+ pay only</label>
   </div>
+
+  <div class="filters" role="search" aria-label="Filter jobs">
+    <input type="search" id="f-q" placeholder="Search company, title or stack" aria-label="Search company, title or stack">
+    <select id="f-where" aria-label="Location"><option value="">All locations</option></select>
+    <select id="f-source" aria-label="Source"><option value="">All sources</option></select>
+    <select id="f-age" aria-label="Posted">
+      <option value="">Any time</option><option value="24">Last 24 hours</option><option value="48">Last 2 days</option><option value="168">Last 7 days</option>
+    </select>
+    <select id="f-years" aria-label="Experience asked">
+      <option value="">Any experience</option><option value="le2">Up to 2 years</option><option value="3">3 years</option><option value="none">Years not stated</option>
+    </select>
+    <label><input type="checkbox" id="only25"> ₹25L+ only</label>
+    <button class="btn small" type="button" id="f-clear">Clear filters</button>
+  </div>
+  <p class="shown" id="shown"></p>
 
   <div class="list" id="list">
     <div class="empty"><h2>No jobs loaded yet</h2>Every 30 minutes from 8 AM to 11 PM IST the engine checks company job boards, Workday, Oracle, LinkedIn and the HN hiring thread, verifies each job, writes a note for it and lists it here.</div>
@@ -98,10 +124,16 @@ summary { cursor: pointer; font-weight: 500; font-size: 14px }
 </div>
 
 <script>
-const state = { jobs: [], marks: {}, view: "new", only25: false, db: null, canWrite: true };
+const state = { jobs: [], marks: {}, view: "new", only25: false, db: null, canWrite: true,
+                f: { q: "", where: "", source: "", age: "", years: "" }, nextRun: null, lastRunAt: null, gapMin: 15, running: false };
 const $ = id => document.getElementById(id);
-try { state.only25 = localStorage.getItem("only25") === "1"; state.view = localStorage.getItem("view") || "new"; } catch (e) {}
+const FILTERS = ["q", "where", "source", "age", "years"];
+try {
+  state.only25 = localStorage.getItem("only25") === "1"; state.view = localStorage.getItem("view") || "new";
+  Object.assign(state.f, JSON.parse(localStorage.getItem("filters") || "{}"));
+} catch (e) {}
 $("only25").checked = state.only25;
+for (const k of FILTERS) $("f-" + k).value = state.f[k];
 
 function ago(iso) {
   const h = (Date.now() - new Date(iso).getTime()) / 36e5;
@@ -175,29 +207,109 @@ function card(j) {
     checks, j.why ? el("p", { style: "margin:0;font-size:14px" }, j.why) : null, contact, note, actions);
 }
 
+function passes(j) {
+  const f = state.f;
+  if (state.only25 && !j.pay25) return false;
+  if (f.where && j.where !== f.where) return false;
+  if (f.source && j.source !== f.source) return false;
+  if (f.age && Date.now() - new Date(j.postedAt).getTime() > f.age * 36e5) return false;
+  if (f.years === "le2" && !(j.years && j.years <= 2)) return false;
+  if (f.years === "3" && j.years !== 3) return false;
+  if (f.years === "none" && j.years) return false;
+  if (f.q) {
+    const hay = [j.company, j.title, j.where, j.source, ...(j.stack || [])].join(" ").toLowerCase();
+    if (!f.q.toLowerCase().split(/\s+/).filter(Boolean).every(w => hay.includes(w))) return false;
+  }
+  return true;
+}
+
+// Location and source lists come from the jobs themselves, so a new source shows up without a code change.
+function fillOptions(id, values, allLabel) {
+  const sel = $(id), keep = state.f[id.slice(2)];
+  const vals = [...new Set(values.filter(Boolean))].sort();
+  if (keep && !vals.includes(keep)) vals.push(keep);
+  sel.replaceChildren(el("option", { value: "" }, allLabel), ...vals.map(v => el("option", { value: v }, v)));
+  sel.value = keep;
+}
+
+function filtersOn() { return state.only25 || FILTERS.some(k => state.f[k]); }
+
 function render() {
-  const by = s => state.jobs.filter(j => (state.marks[j.id]?.status || "new") === s && (!state.only25 || j.pay25));
-  const groups = { new: by("new"), applied: by("applied"), skipped: by("skipped") };
+  fillOptions("f-where", state.jobs.map(j => j.where), "All locations");
+  fillOptions("f-source", state.jobs.map(j => j.source), "All sources");
+  const statusOf = j => state.marks[j.id]?.status || "new";
+  const groups = { new: [], applied: [], skipped: [] }, totals = { new: 0, applied: 0, skipped: 0 };
+  for (const j of state.jobs) {
+    const s = statusOf(j);
+    if (!(s in groups)) continue;
+    totals[s]++;
+    if (passes(j)) groups[s].push(j);
+  }
   for (const k of Object.keys(groups)) {
     $("n-" + k).textContent = `(${groups[k].length})`;
     $("tab-" + k).setAttribute("aria-pressed", String(state.view === k));
   }
-  const list = $("list"); list.replaceChildren();
   const rows = groups[state.view];
+  $("shown").textContent = filtersOn() ? `Showing ${rows.length} of ${totals[state.view]} with these filters` : "";
+  $("f-clear").hidden = !filtersOn();
+  const list = $("list"); list.replaceChildren();
+  const nextTxt = state.nextRun ? `The next search is at ${clock(state.nextRun)}.` : "";
   if (!state.jobs.length) {
-    list.append(el("div", { class: "empty" }, el("h2", {}, "No jobs loaded yet"),
-      "Every 30 minutes from 8 AM to 11 PM IST the engine checks 100+ company job boards, Workday, Oracle, LinkedIn and the HN hiring thread and lists the jobs that pass every check here. Use Search now to run it any time."));
+    list.append(el("div", { class: "empty" }, el("h2", {}, "No jobs yet"),
+      `Every 30 minutes from 8 AM to 11 PM IST the engine checks 100+ company job boards, Workday, Oracle, LinkedIn and the HN hiring thread and lists the jobs that pass every check here. ${nextTxt}`));
+  } else if (!rows.length && filtersOn() && totals[state.view]) {
+    list.append(el("div", { class: "empty" }, el("h2", {}, "No jobs match these filters"),
+      el("button", { class: "btn", type: "button", onclick: clearFilters }, "Clear filters")));
   } else if (!rows.length) {
     list.append(el("div", { class: "empty" }, el("h2", {}, state.view === "new" ? "Nothing left to apply to" : "Nothing here yet"),
-      state.view === "new" ? "You've handled every job from the latest runs. The next refresh is at 8 AM IST." : "Jobs you tick appear here."));
+      state.view === "new" ? `You've handled every job so far. ${nextTxt} New jobs also come to Telegram.` : "Jobs you tick appear here."));
   } else rows.forEach(j => list.append(card(j)));
+}
+
+function saveFilters() { try { localStorage.setItem("filters", JSON.stringify(state.f)); } catch (e) {} }
+function clearFilters() {
+  for (const k of FILTERS) { state.f[k] = ""; $("f-" + k).value = ""; }
+  state.only25 = false; $("only25").checked = false;
+  try { localStorage.setItem("only25", "0"); } catch (e) {}
+  saveFilters(); render();
 }
 
 document.querySelectorAll(".tab").forEach(b => b.addEventListener("click", () => {
   state.view = b.dataset.view; try { localStorage.setItem("view", state.view); } catch (e) {} render();
 }));
 $("only25").addEventListener("change", e => { state.only25 = e.target.checked; try { localStorage.setItem("only25", state.only25 ? "1" : "0"); } catch (x) {} render(); });
+for (const k of FILTERS) $("f-" + k).addEventListener(k === "q" ? "input" : "change", e => { state.f[k] = e.target.value; saveFilters(); render(); });
+$("f-clear").addEventListener("click", clearFilters);
 render();
+
+// --- next search countdown + Search now availability ------------------------
+function clock(iso) {
+  const d = new Date(iso), today = new Date();
+  const t = d.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "numeric", minute: "2-digit" });
+  const sameDay = d.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" }) === today.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" });
+  return t + " IST" + (sameDay ? "" : " tomorrow");
+}
+function span(ms) {
+  const s = Math.max(0, Math.round(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60;
+  return h ? `${h} h ${m} min` : m ? `${m} min ${String(sec).padStart(2, "0")} s` : `${sec} s`;
+}
+function tick() {
+  const next = $("next");
+  if (state.running) next.replaceChildren(el("span", {}, "Searching all sources now…"));
+  else if (state.nextRun) {
+    const left = new Date(state.nextRun) - Date.now();
+    next.replaceChildren(el("span", {}, "Next search"), el("b", {}, clock(state.nextRun)),
+      el("span", {}, left > 0 ? "in " + span(left) : "starting…"));
+    // slot passed: fetch the new state, at most every 30 s (a fast browser clock must not cause a request loop)
+    if (left < -15000 && Date.now() - (tick.forcedAt || 0) > 30000) { tick.forcedAt = Date.now(); load(); }
+  }
+  const btn = $("refresh");
+  const wait = state.lastRunAt ? new Date(state.lastRunAt).getTime() + state.gapMin * 6e4 - Date.now() : 0;
+  btn.disabled = state.running || wait > 0;
+  btn.textContent = state.running ? "Searching…" : wait > 0 ? `Search now (in ${Math.ceil(wait / 6e4)} min)` : "Search now";
+  btn.title = wait > 0 ? `Searches can be started by hand once every ${state.gapMin} minutes` : "";
+}
+setInterval(tick, 1000);
 
 let poll = null;
 async function load() {
@@ -214,16 +326,21 @@ async function load() {
       el("span", {}, `${run.checked} jobs checked`),
       el("span", {}, `${run.added} new`),
       el("span", {}, Object.entries(run.sources || {}).map(([k, v]) => `${k} ${v}`).join(" · "))] : [el("span", {}, "First search running…")]));
-    $("refresh").disabled = d.running;
-    if (d.error) say("Last search failed: " + d.error);
+    state.running = d.running; state.nextRun = d.nextRun; state.lastRunAt = run && run.at; state.gapMin = d.refreshGapMin || 15;
+    say(d.error ? "Last search failed: " + d.error : "");
     clearTimeout(poll);
-    if (d.running) poll = setTimeout(load, 8000);
-    render();
-  } catch (e) { say("Couldn't load jobs: " + e.message); }
+    poll = setTimeout(load, d.running ? 8000 : 60000);  // keep the page current without a reload
+    render(); tick();
+  } catch (e) { say("Couldn't load jobs: " + e.message); clearTimeout(poll); poll = setTimeout(load, 60000); }
 }
 $("refresh").addEventListener("click", async () => {
-  const r = await fetch("api/refresh", { method: "POST" });
-  if (r.ok) { say(""); load(); } else say((await r.json()).detail || "Couldn't start a search.");
+  $("refresh").disabled = true;
+  try {
+    const r = await fetch("api/refresh", { method: "POST" });
+    if (r.ok) { say(""); state.running = true; tick(); load(); }
+    else say((await r.json()).detail || "Couldn't start a search.");
+  } catch (e) { say("Couldn't start a search: " + e.message); }
+  tick();
 });
 load();
 </script>

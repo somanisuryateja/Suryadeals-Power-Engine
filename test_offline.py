@@ -122,6 +122,7 @@ assert "3+ years" not in note and "Roche" in note
 from fastapi.testclient import TestClient
 r = TestClient(m.app).get("/api/jobs").json()
 assert len(r["jobs"]) == 5 and r["lastRun"]["checked"] >= 4
+assert r["nextRun"] > datetime.now(timezone.utc).isoformat() and r["refreshGapMin"] == 15  # page countdown
 
 # Telegram fails on the 2nd of 2 new jobs: the failure is in the run history, and the unsent job
 # is retried on the next run instead of being marked as alerted and lost
