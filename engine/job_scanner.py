@@ -141,14 +141,27 @@ def scan(ats, slug):
         return [], f"{ats}/{slug}: {e}"
 
 
+BLOCK_END = re.compile(r"<\s*(?:br|/p|/li|/div|/h\d|/tr|/ul|/ol)\b[^>]*>", re.I)
+
+
+def html_text(s):
+    """JD HTML -> text, one line per paragraph / bullet. The line breaks matter: the filters read
+    'sentences', and run-together bullets ('...function or industry 2-5 years of Java') fool them."""
+    s = html.unescape(s or "")  # Greenhouse sends escaped HTML
+    s = re.sub(r"<[^>]+>", " ", BLOCK_END.sub("\n", s))
+    s = re.sub(r"[^\S\n]+", " ", html.unescape(s))  # every kind of space (nbsp, U+202F...) -> " "
+    return re.sub(r" ?\n[\s]*", "\n", s).strip()
+
+
 def add_desc(job):
     """Greenhouse and SmartRecruiters list endpoints have no JD text; fetch it per job."""
     if "detail" not in job:
         return job
     try:
         d = get_json(job["detail"])
-        raw = d.get("content") or json.dumps(((d.get("jobAd") or {}).get("sections")) or {})
-        job["desc"] = re.sub(r"<[^>]+>", " ", html.unescape(raw))
+        sections = ((d.get("jobAd") or {}).get("sections")) or {}
+        raw = d.get("content") or "\n".join((s or {}).get("text") or "" for s in sections.values())
+        job["desc"] = html_text(raw)
     except Exception:
         job["desc"] = ""
     return job

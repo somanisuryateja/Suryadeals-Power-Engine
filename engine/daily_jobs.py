@@ -345,6 +345,12 @@ def _selfcheck():
            "We are a team based in Bangalore hiring remote engineers across India. 3+ years React, Node.js"}]
     for j in ok:
         assert check_text(j) is None, (j["title"], check_text(j))
+    # SmartRecruiters / Greenhouse HTML: bullets must stay separate lines, or "function or industry" next
+    # to "2-5 years of Java" reads like a list of options (ServiceNow leak, 13 Nov 11:30)
+    sr = ("<ul><li>Think about AI's potential impact on the function or industry.</li>"
+          "<li>2-5 years of experience with Java or a similar OO language</li><li>Passion for JavaScript and React</li></ul>")
+    assert check_text({"title": "Applications Dev Engineer", "where": "Hyderabad", "desc": js.html_text(sr)}) == "needs Java"
+    assert js.html_text("&lt;p&gt;React &amp;amp; Node&lt;/p&gt;&lt;p&gt;Remote&lt;/p&gt;") == "React & Node\nRemote"
     assert JOB_SEEKER.search("Hemant Singh | Software Engineer | India (REMOTE) I'm a software engineer focused on backend")
     assert not JOB_SEEKER.search("Acme | Full Stack Engineer | Remote (India) | We're hiring engineers who like React")
 

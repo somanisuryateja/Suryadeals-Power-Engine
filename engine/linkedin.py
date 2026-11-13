@@ -9,6 +9,10 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
+try:
+    from engine.job_scanner import html_text
+except ImportError:  # run as a script from engine/
+    from job_scanner import html_text
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"
 QUERIES = ["react node", "full stack developer", "mern stack", "next.js developer",
@@ -62,7 +66,7 @@ def parse_cards(page, now):
 def parse_detail(page):
     d = re.search(r'show-more-less-html__markup[^>]*>(.*?)</div>', page, re.S)
     a = re.search(r'num-applicants__caption[^>]*>(.*?)<', page, re.S) or re.search(r'(Be among the first \d+ applicants)', page)
-    return _text(d.group(1) if d else ""), _text(a.group(1) if a else "")
+    return html_text(d.group(1) if d else ""), _text(a.group(1) if a else "")
 
 
 def collect(keep, now=None):

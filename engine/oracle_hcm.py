@@ -5,11 +5,15 @@ List:   GET https://{host}/hcmRestApi/resources/latest/recruitingCEJobRequisitio
 Detail: GET https://{host}/hcmRestApi/resources/latest/recruitingCEJobRequisitionDetails?finder=ById;Id="..",siteNumber=..
 Job:        https://{host}/hcmUI/CandidateExperience/en/sites/{site}/job/{id}
 """
-import html, json, re
+import json, re
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 from urllib.request import Request, urlopen
+try:
+    from engine.job_scanner import html_text
+except ImportError:  # run as a script from engine/
+    from job_scanner import html_text
 
 # (company, host, siteNumber, site name in job URLs, locationId of "India" in the site's location facet)
 SITES = [
@@ -61,15 +65,11 @@ def list_site(company, host, site_no, site, loc_id, max_days, now):
     return out
 
 
-def _text(s):
-    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html.unescape(html.unescape(s or "")))).strip()
-
-
 def add_detail(j):
     try:
         x = _json(detail_url(j["host"], j["site_no"], j["id"]))["items"][0]
         # the job's own text only; CorporateDescriptionStr is the same company blurb on every post
-        j["desc"] = " ".join(_text(x.get(k)) for k in
+        j["desc"] = "\n".join(html_text(x.get(k)) for k in
                              ("ExternalDescriptionStr", "ExternalResponsibilitiesStr", "ExternalQualificationsStr"))
         if x.get("ExternalPostedStartDate"):
             j["posted"] = datetime.fromisoformat(x["ExternalPostedStartDate"])

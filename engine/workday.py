@@ -4,10 +4,14 @@ List:   POST https://{tenant}.{wd}.myworkdayjobs.com/wday/cxs/{tenant}/{site}/jo
 Detail: GET  https://{tenant}.{wd}.myworkdayjobs.com/wday/cxs/{tenant}/{site}{externalPath}
 Each site is searched for "Hyderabad" and for "India remote".
 """
-import html, json, re
+import json, re
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from urllib.request import Request, urlopen
+try:
+    from engine.job_scanner import html_text
+except ImportError:  # run as a script from engine/
+    from job_scanner import html_text
 
 # (company, tenant, wd host, site). ponytail: hand list; `--probe` shows which ones answer, prune the rest.
 SITES = [
@@ -82,7 +86,7 @@ def add_detail(j):
         info = _json(j["base"] + j["path"]).get("jobPostingInfo") or {}
         locs = " / ".join([info.get("location") or ""] + list(info.get("additionalLocations") or []))
         j["loc"] = locs or j["loc"]
-        j["desc"] = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html.unescape(info.get("jobDescription") or "")))
+        j["desc"] = html_text(info.get("jobDescription"))
         j["url"] = info.get("externalUrl") or j["url"]
         if info.get("startDate"):
             j["posted"] = datetime.fromisoformat(info["startDate"][:10]).replace(tzinfo=timezone.utc)
