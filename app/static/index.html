@@ -93,7 +93,7 @@ summary { cursor: pointer; font-weight: 500; font-size: 14px }
   </div>
 
   <div class="list" id="list">
-    <div class="empty"><h2>No jobs loaded yet</h2>Every morning at 8 AM IST, Claude checks company job boards, Himalayas and the HN hiring thread, verifies each job, writes a note for it and lists it here.</div>
+    <div class="empty"><h2>No jobs loaded yet</h2>Every 30 minutes from 8 AM to 11 PM IST the engine checks company job boards, Workday, Oracle, LinkedIn and the HN hiring thread, verifies each job, writes a note for it and lists it here.</div>
   </div>
 </div>
 
@@ -186,7 +186,7 @@ function render() {
   const rows = groups[state.view];
   if (!state.jobs.length) {
     list.append(el("div", { class: "empty" }, el("h2", {}, "No jobs loaded yet"),
-      "Every morning at 8 AM IST the engine checks 100+ company job boards, Himalayas and the HN hiring thread and lists the jobs that pass every check here. Use Search now to run it any time."));
+      "Every 30 minutes from 8 AM to 11 PM IST the engine checks 100+ company job boards, Workday, Oracle, LinkedIn and the HN hiring thread and lists the jobs that pass every check here. Use Search now to run it any time."));
   } else if (!rows.length) {
     list.append(el("div", { class: "empty" }, el("h2", {}, state.view === "new" ? "Nothing left to apply to" : "Nothing here yet"),
       state.view === "new" ? "You've handled every job from the latest runs. The next refresh is at 8 AM IST." : "Jobs you tick appear here."));

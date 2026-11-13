@@ -1,7 +1,7 @@
 """Daily job collector for the Morning Jobs page.
 
 Sources: company job boards (Greenhouse, Lever, Ashby, SmartRecruiters via
-job_scanner.py), Himalayas (India-eligible remote search) and the current
+job_scanner.py), LinkedIn, Workday, Oracle career sites and the current
 HN "Who is hiring" thread. Every job is checked at its source before it is
 kept: real posting date, location really open to Hyderabad / India, stack,
 experience asked. Writes jobs_today.json for the morning Claude task, which
@@ -39,11 +39,20 @@ SENIOR = re.compile(r"\bsenior\b|\bsr\.?\b", re.I)
 MAX_YEARS = 3
 PAY_FLOOR_LAKH = 12
 BAD_DESC = re.compile(r"\boutsourcing\b|fixed price|paid on completion|data annotation|data labell?ing|equity[- ]only", re.I)
-HIMALAYAS_QUERIES = ["full stack", "node", "react", "typescript", "fastapi", "python backend", "ai engineer", "mern"]
 
 
 def job_id(url):
     return hashlib.sha1(url.encode()).hexdigest()[:16]
+
+
+CO_SUFFIX = re.compile(r"\b(inc|llc|ltd|limited|pvt|private|corp|corporation|plc|gmbh|technologies)\b")
+
+
+def same_job_key(j):
+    """company + title + city: the same opening found on two sources (links differ).
+    ponytail: two real openings with the same title in the same city collapse into one."""
+    norm = lambda s: " ".join(re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).split())
+    return f"{' '.join(CO_SUFFIX.sub(' ', norm(j['company'])).split())}|{norm(j['title'])}|{j.get('where', '')}"
 
 
 def strip(s):
@@ -112,43 +121,7 @@ def from_boards(days, now):
     return fresh, len(tasks), errors
 
 
-# --- source 2: Himalayas (dates re-checked on the job page itself) ---------
-def from_himalayas(days, now):
-    seen, out = set(), []
-    for q in HIMALAYAS_QUERIES:
-        for page in range(1, 6):
-            try:
-                data = js.get_json("https://himalayas.app/jobs/api/search?" + urlencode({"q": q, "country": "India", "page": page}))
-            except Exception:
-                break
-            for j in data.get("jobs", []):
-                if j["guid"] in seen:
-                    continue
-                seen.add(j["guid"])
-                locs = [l.lower() for l in j.get("locationRestrictions") or []]
-                if locs and "india" not in locs:
-                    continue
-                pay = f"{j.get('currency')} {j.get('minSalary')}-{j.get('maxSalary')} {j.get('salaryPeriod')}" if j.get("minSalary") else ""
-                out.append({"company": j["companyName"], "title": j["title"], "loc": "India" if locs else "Worldwide",
-                            "remote": True, "url": j["applicationLink"].split("?")[0], "desc": strip(j.get("description")),
-                            "pay": pay, "source": "Himalayas", "feed_date": j.get("pubDate")})
-    cut = now.timestamp() - days * 86400
-    kept = []
-    for j in out:
-        if (j["feed_date"] or 0) < cut or not js.TITLE_OK.search(j["title"]) or js.TITLE_BAD.search(j["title"]):
-            continue
-        # ponytail: Himalayas re-dates old posts and blocks scripted page reads, so the
-        # morning Claude run opens each job page and checks the real date before loading it.
-        j["posted"] = datetime.fromtimestamp(j["feed_date"], timezone.utc)
-        j["verify"] = "himalayas_date"
-        j["where"] = "Remote (India)" if j["loc"] == "India" else "Remote (Worldwide)"
-        j["checks"] = [f"Location filter on Himalayas: {j['loc']}",
-                       "! Date comes from the Himalayas feed, which sometimes re-dates old posts: check it on the page"]
-        kept.append(j)
-    return kept
-
-
-# --- source 3: HN "Who is hiring" (comment date = posting date) ----------
+# --- source 2: HN "Who is hiring" (comment date = posting date) ----------
 def from_hn(days, now):
     s = js.get_json("https://hn.algolia.com/api/v1/search_by_date?tags=story,author_whoishiring&hitsPerPage=6")
     story = next(h for h in s["hits"] if h["title"].startswith("Ask HN: Who is hiring?"))
@@ -160,7 +133,7 @@ def from_hn(days, now):
         if not t or (now - posted).total_seconds() > days * 86400:
             continue
         head = t.split("|")
-        if len(head) < 3 or not re.search(r"\b(india|worldwide|anywhere|apac|asia)\b", t[:400], re.I):
+        if len(head) < 3 or not re.search(r"\b(india|apac|asia|hyderabad)\b", t[:400], re.I):
             continue
         if not js.MY_STACK.search(t) or re.search(r"\b(senior|staff|principal|lead)\b", t[:200], re.I) and not re.search(r"\bjunior|mid\b", t[:200], re.I):
             continue
@@ -169,7 +142,7 @@ def from_hn(days, now):
                     "url": links[0] if links else f"https://news.ycombinator.com/item?id={c['id']}",
                     "hn": f"https://news.ycombinator.com/item?id={c['id']}", "posted": posted, "pay": "",
                     "where": "Remote (check post)", "source": "HN Who is hiring",
-                    "checks": ["Posted by the company in the HN thread", "Mentions India / worldwide in the header"]})
+                    "checks": ["Posted by the company in the HN thread", "Mentions India / APAC in the header"]})
     return out
 
 
@@ -188,7 +161,7 @@ def from_oracle(days, now):
 
 def collect(days=2, max_years=MAX_YEARS, slow=True):
     """Run every source and checks; return the run as a dict.
-    slow=False skips Himalayas and HN (heavy, slow-changing) on the frequent runs."""
+    slow=False skips HN (heavy, slow-changing) on the frequent runs."""
     now = datetime.now(timezone.utc)
     boards, n_boards, errors = from_boards(days, now)
     counts = {"Company job boards": len(boards)}
@@ -201,7 +174,7 @@ def collect(days=2, max_years=MAX_YEARS, slow=True):
             got, errors = [], errors + [f"{name}: {e}"]
         counts[name] = len(got)
         jobs += got
-    for name, fn in [("Himalayas", from_himalayas), ("HN Who is hiring", from_hn)] if slow else []:
+    for name, fn in [("HN Who is hiring", from_hn)] if slow else []:
         try:
             got = fn(days, now)
         except Exception as e:
@@ -209,7 +182,7 @@ def collect(days=2, max_years=MAX_YEARS, slow=True):
         counts[name] = len(got)
         jobs += got
 
-    kept, rejected, seen = [], [], set()
+    kept, rejected, seen, keys = [], [], set(), set()
     for j in jobs:
         key = j["url"]
         if key in seen:
@@ -221,6 +194,11 @@ def collect(days=2, max_years=MAX_YEARS, slow=True):
         if why:
             rejected.append(f"{j['company']} | {j['title']}: {why}")
             continue
+        k = same_job_key(j)  # sources run boards-first, so the company's own ATS link wins
+        if k in keys:
+            rejected.append(f"{j['company']} | {j['title']}: same job already found on another source")
+            continue
+        keys.add(k)
         lakh = pay_inr_lakh(j.get("pay"))
         if j.get("yrs"):
             j["checks"].append(f"Asks {j['yrs']}+ years")
@@ -253,8 +231,7 @@ def probe():
         print(f"  ok    LinkedIn returned {len(cards)} jobs from the last 24 h")
     except Exception as e:
         print(f"  FAIL  LinkedIn: {e}")
-    for name, url in [("Himalayas", "https://himalayas.app/jobs/api/search?q=react&country=India"),
-                      ("HN", "https://hn.algolia.com/api/v1/search_by_date?tags=story,author_whoishiring&hitsPerPage=1")]:
+    for name, url in [("HN", "https://hn.algolia.com/api/v1/search_by_date?tags=story,author_whoishiring&hitsPerPage=1")]:
         try:
             js.get_json(url); print(f"  ok    {name}")
         except Exception as e:
@@ -283,6 +260,9 @@ def _selfcheck():
     assert "region" in check_text(j, 4)
     j = {"title": "Full Stack Engineer", "desc": "3+ years with React, Node.js and TypeScript. Remote India."}
     assert check_text(j, 4) is None and j["yrs"] == 3
+    a = {"company": "ServiceNow, Inc.", "title": "Software Engineer (Full-Stack)", "where": "Hyderabad"}
+    assert same_job_key(a) == same_job_key({"company": "ServiceNow", "title": "software engineer full stack", "where": "Hyderabad"})
+    assert same_job_key(a) != same_job_key(dict(a, where="Remote (India/APAC)"))
     j = {"title": "Full Stack Engineer", "desc": "6+ years React, Node.js"}
     assert check_text(j, 4) == "asks 6+ years"
     assert "floor" in check_text({"title": "Python Developer", "desc": "python fastapi", "pay": "INR 400000-600000 annual"}, 4)

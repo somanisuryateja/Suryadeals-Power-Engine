@@ -1,8 +1,8 @@
 """LinkedIn public (logged-out) job search: no account, no password.
 
 Uses the same guest endpoints a logged-out browser uses. Slow on purpose:
-a few searches per run, rotated, with pauses. If LinkedIn answers 429 we back
-off for two hours. Results go through the same checks as every other source.
+2 searches and 6 job pages, at most once an hour, rotated, with pauses. If LinkedIn
+answers 429 we back off for six hours. Results go through the same checks as every other source.
 """
 import html, re, time
 from datetime import datetime, timedelta, timezone
@@ -15,11 +15,13 @@ QUERIES = ["react node", "full stack developer", "mern stack", "next.js develope
            "python fastapi", "node.js developer"]
 PLACES = [{"location": "Hyderabad, Telangana, India"}, {"location": "India", "f_WT": "2"}]  # f_WT=2: remote
 PAIRS = [(q, p) for q in QUERIES for p in PLACES]
-PER_RUN = 4            # searches per run; all 12 are covered every 3 runs
-WINDOW_S = 4 * 3600    # each search looks back 4 h, so a 3-run rotation never leaves a gap
-MAX_DETAILS = 12       # job pages read per run
+PER_RUN = 2            # searches per run; all 12 are covered every 6 runs (6 h)
+WINDOW_S = 7 * 3600    # each search looks back 7 h, so the 6-h rotation never leaves a gap
+MAX_DETAILS = 6        # job pages read per run
+EVERY_S = 55 * 60      # at most once an hour (the scheduler ticks every 30 min)
+BLOCK_S = 6 * 3600     # back-off after a 429
 PAUSE = 1.5
-_state = {"next": 0, "blocked_until": 0.0}
+_state = {"next": 0, "blocked_until": 0.0, "last_run": 0.0}
 
 
 def _get(url):
@@ -69,6 +71,9 @@ def collect(keep, now=None):
     if time.time() < _state["blocked_until"]:
         return [], ["LinkedIn: paused after a 429, resumes " +
                     datetime.fromtimestamp(_state["blocked_until"], timezone.utc).strftime("%H:%M UTC")]
+    if time.time() - _state["last_run"] < EVERY_S:
+        return [], []  # ran under an hour ago: skip quietly
+    _state["last_run"] = time.time()
     picks = [PAIRS[(_state["next"] + i) % len(PAIRS)] for i in range(PER_RUN)]
     _state["next"] = (_state["next"] + PER_RUN) % len(PAIRS)
     seen, cards, errors = set(), [], []
@@ -82,8 +87,8 @@ def collect(keep, now=None):
                     seen.add(c["lid"]); cards.append(c)
         except HTTPError as e:
             if e.code == 429:
-                _state["blocked_until"] = time.time() + 7200
-                errors.append("LinkedIn: 429 rate limit, pausing 2 h")
+                _state["blocked_until"] = time.time() + BLOCK_S
+                errors.append("LinkedIn: 429 rate limit, pausing 6 h")
                 break
             errors.append(f"LinkedIn search '{q}': HTTP {e.code}")
         except Exception as e:
@@ -91,10 +96,18 @@ def collect(keep, now=None):
         time.sleep(PAUSE)
     fresh = [c for c in cards if c["posted"] and keep(c)]
     for c in fresh[:MAX_DETAILS]:
+        c["desc"], c["applicants"] = "", ""
+        if time.time() < _state["blocked_until"]:
+            continue  # blocked during this run: read no more job pages
         try:
             c["desc"], c["applicants"] = parse_detail(_get(f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{c['lid']}"))
+        except HTTPError as e:
+            if e.code == 429:
+                _state["blocked_until"] = time.time() + BLOCK_S
+                errors.append("LinkedIn: 429 rate limit on a job page, pausing 6 h")
+            else:
+                errors.append(f"LinkedIn job {c['lid']}: HTTP {e.code}")
         except Exception as e:
-            c["desc"], c["applicants"] = "", ""
             errors.append(f"LinkedIn job {c['lid']}: {e}")
         time.sleep(PAUSE)
     for c in fresh:
@@ -123,3 +136,4 @@ def _selfcheck():
                         '<figcaption class="num-applicants__caption">Over 200 applicants</figcaption>')
     assert d == "2+ years React" and a == "Over 200 applicants"
     assert len(PAIRS) == 12 and len(PAIRS) % PER_RUN == 0
+    assert WINDOW_S >= len(PAIRS) // PER_RUN * 3600  # rotation fits inside the look-back

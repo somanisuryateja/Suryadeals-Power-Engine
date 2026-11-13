@@ -39,9 +39,10 @@ TITLE_BAD = re.compile(
     r"salesforce|\bsap\b|data engineer|analytics|\bsre\b|reliability|devops|security|network|embedded|firmware|"
     r"hardware|\bqa\b|test|sdet|support|sales|solutions|research|scientist|machine learning engineer|ml engineer|"
     r"mobile|game|graphics|kernel|compiler|database engineer|infrastructure", re.I)
-# Hyderabad, or explicitly remote and open to India / APAC / anywhere.
+# Hyderabad, or explicitly open to India / APAC. "Worldwide", "global", "anywhere" don't count:
+# in practice they mean US/EU hours or a reseller board, not a team that hires in India.
 LOC_HYD = re.compile(r"hyderabad|telangana", re.I)
-LOC_OPEN = re.compile(r"india|apac|apj|asia|anywhere|worldwide|global", re.I)
+LOC_OPEN = re.compile(r"india|apac|apj|asia", re.I)
 LOC_REMOTE = re.compile(r"remote", re.I)
 LOC_OTHER_ONLY = re.compile(r"\b(us|usa|united states|canada|uk|united kingdom|emea|europe|germany|ireland|"
                             r"latam|brazil|mexico|australia|japan|singapore)\b", re.I)
@@ -225,6 +226,8 @@ def _selfcheck():
     assert location_ok("North America / APJ / EMEA", remote_flag=True) == "Remote (India/APAC)"
     assert location_ok("Remote - US") is None
     assert location_ok("Bengaluru, India") is None
+    assert location_ok("Remote (Worldwide)") is None and location_ok("Anywhere", remote_flag=True) is None
+    assert location_ok("Remote - Global") is None
     assert keep({"title": "Software Engineer II", "loc": "Hyderabad"})
     assert keep({"title": "Senior Software Engineer", "loc": "Hyderabad"})  # judged by years in daily_jobs
     assert not keep({"title": "Lead Software Engineer", "loc": "Hyderabad"})

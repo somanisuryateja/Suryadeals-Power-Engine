@@ -35,7 +35,7 @@ KEEP_DAYS = 7                    # page shows a week
 LOOKBACK_DAYS = 2                # each run only looks at jobs posted in the last 2 days
 EVERY_MIN = 30                   # run every 30 min ...
 DAY_START, DAY_END = 8, 23       # ... between 08:00 and 23:00 IST
-SLOW_EVERY_S = 3 * 3600          # Himalayas + HN at most every 3 h
+SLOW_EVERY_S = 3 * 3600          # HN at most every 3 h
 MAX_ALERTS = 15                  # per run; more are summarised in one message
 TG_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TG_CHAT = os.environ.get("TELEGRAM_CHAT_ID", "")
@@ -72,6 +72,9 @@ def save_jobs(jobs, replace=False):
     """Insert new jobs (existing ones keep their notes unless replace). Returns rows written."""
     now = datetime.now(timezone.utc).isoformat()
     with db() as con:
+        # same opening already saved from another source (different link): keep the first one
+        taken = {daily_jobs.same_job_key(json.loads(r["body"])): r["id"] for r in con.execute("SELECT id, body FROM jobs")}
+        jobs = [j for j in jobs if taken.get(daily_jobs.same_job_key(j), j["id"]) == j["id"]]
         before = con.total_changes
         con.executemany(f"INSERT OR {'REPLACE' if replace else 'IGNORE'} INTO jobs VALUES (?,?,?,?)",
                         [(j["id"], j["postedAt"], now, json.dumps(j, ensure_ascii=False)) for j in jobs])
@@ -129,7 +132,7 @@ def alert_text(j, now=None):
     now = now or datetime.now(timezone.utc)
     mins = (now - datetime.fromisoformat(j["postedAt"])).total_seconds() / 60
     age = f"{mins:.0f} min ago" if mins < 90 else f"{mins / 60:.0f} h ago" if mins < 48 * 60 else f"{mins / 1440:.0f} days ago"
-    yrs = f"{j['years']}+ yrs asked" if j.get("years") else "years not stated"
+    yrs = f"{j['years']}+ yrs asked" if j.get("years") else "⚠️ years not stated, check the JD"
     pay = f"~{j['payLakh']}L" if j.get("payLakh") else "pay not listed"
     lines = [f"🟢 NEW JOB · posted {age}", f"{j['title']} · {j['company']}", f"📍 {j['where']} · {yrs} · {pay}",
              f"Source: {j['source']}" + (f" · {j['applicants']}" if j.get("applicants") else "")]
@@ -143,7 +146,9 @@ def send_alerts(jobs, prime=False):
     """Alert each job once. prime=True marks jobs as alerted without sending (first run, no flood)."""
     with db() as con:
         done = {r["id"] for r in con.execute("SELECT id FROM alerts")}
-    new = [j for j in jobs if j["id"] not in done]
+        done_keys = {daily_jobs.same_job_key(json.loads(r["body"]))
+                     for r in con.execute("SELECT j.body FROM jobs j JOIN alerts a ON a.id = j.id")}
+    new = [j for j in jobs if j["id"] not in done and daily_jobs.same_job_key(j) not in done_keys]
     sent = 0
     if not prime and new and TG_TOKEN and TG_CHAT:
         for j in new[:MAX_ALERTS]:
@@ -330,6 +335,7 @@ def _selfcheck():
     with db() as con:
         assert con.execute("SELECT COUNT(*) FROM alerts").fetchone()[0] == 1
     assert send_alerts([j]) == 0  # already alerted
+    assert "⚠️ years not stated" in alert_text(dict(j, years=None))
 
 
 if __name__ == "__main__":

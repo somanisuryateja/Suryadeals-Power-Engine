@@ -12,13 +12,14 @@ Every 30 minutes from 8:00 AM to 11:00 PM IST, and on demand from the page (at m
    - about 104 company job boards through their public APIs (Greenhouse, Lever, Ashby, SmartRecruiters);
    - **Workday** career sites of large companies (NVIDIA, Salesforce, Adobe, Intel, Novartis…), searched for Hyderabad and remote India;
    - **Oracle Recruiting Cloud** career sites (Dell), newest India jobs first;
-   - **LinkedIn public job search** (logged out, no account): 4 searches per run, rotated, pausing 2 h if rate-limited;
-   - every 3 hours: Himalayas (remote, India) and the Hacker News "Who is hiring" thread.
-2. **Checks** each job against Surya's rules: Hyderabad or remote open to India; React / Node / TypeScript / Python stack;
+   - **LinkedIn public job search** (logged out, no account): 2 searches and 6 job pages, once an hour, rotated, pausing 6 h if rate-limited;
+   - every 3 hours: the Hacker News "Who is hiring" thread.
+   The same opening found on two sources (same company, title and city) is saved and alerted once.
+2. **Checks** each job against Surya's rules: Hyderabad, or remote explicitly open to India / APAC ("worldwide" doesn't count); React / Node / TypeScript / Python stack;
    minimum experience asked **3 years or less**; no Lead/Staff/Principal/Manager titles, and "Senior" only when the JD asks ≤3 years;
    pay, when shown, **above ₹12 LPA**; no region-locked "remote", gigs or data-labelling work.
 3. **Stores** them in SQLite with a short application note; the page shows the last 7 days.
-4. **Alerts on Telegram** once per new job (title, company, location, years asked, pay, source, applicants, link).
+4. **Alerts on Telegram** once per new job (title, company, location, years asked or "⚠️ years not stated", pay, source, applicants, link).
    The first run after deploy only records existing jobs, so it never floods the chat.
 
 ## Telegram setup

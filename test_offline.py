@@ -72,6 +72,7 @@ js.COMPANIES = {"greenhouse": ["acme"]}
 js.get_json = fake_get_json
 linkedin._get = fake_li_get
 linkedin.PAUSE = 0
+linkedin.EVERY_S = 0  # LinkedIn on every run here (live: once an hour)
 workday._json = fake_wd_json
 oracle_hcm._json = fake_oracle_json
 sent = []
@@ -80,7 +81,7 @@ m.tg_send = lambda text: sent.append(text) or True
 m.init_db()
 with m.db() as con:  # an old run in the DB, like the live server: first run must still not flood
     con.execute("INSERT INTO runs VALUES (?,?)", (iso(days=1), json.dumps({"at": iso(days=1)})))
-m.state["last_slow"] = 9e18          # skip Himalayas/HN (network) in this test
+m.state["last_slow"] = 9e18          # skip HN (network) in this test
 m.run_collect()                      # first run: primes alerts, sends nothing
 assert m.state["error"] == "", m.state["error"]
 titles = {(j["company"], j["source"]) for j in m.jobs()["jobs"]}
@@ -96,6 +97,18 @@ m.run_collect()                      # third run: nothing new, nothing sent
 assert len(sent) == 1
 run = m.last_run()
 assert run["sources"]["LinkedIn"] == 1 and run["sources"]["Workday"] == 1 and run["sources"]["Oracle HCM"] == 1 and run["alerted"] == 0
+
+# the same opening on a second source (LinkedIn, other link, "Acme Inc."): not saved or alerted twice,
+# whether both show up in one run or the copy turns up in a later run
+LI_LIST += ('<li><div data-entity-urn="urn:li:jobPosting:779"><h3 class="base-search-card__title">Full Stack Engineer</h3>'
+            '<h4 class="base-search-card__subtitle"><a>Acme Inc.</a></h4><span class="job-search-card__location">Hyderabad, Telangana, India</span>'
+            '<time>5 minutes ago</time></div></li>')
+m.run_collect()                      # same run: board copy wins
+gh5 = GH["jobs"].pop()
+m.run_collect()                      # later run, only the LinkedIn copy
+GH["jobs"].append(gh5)
+fs = [j for j in m.jobs()["jobs"] if j["title"] == "Full Stack Engineer"]
+assert len(sent) == 1 and len(fs) == 1 and fs[0]["source"] == "Greenhouse", (sent, fs)
 # a job older than the look-back is dropped in collect(), whatever the source: not saved, counted or alerted
 old, _ = dj.from_workday(2, now)
 old = [dict(old[0], url="https://wd/old", posted=now - timedelta(days=10), checks=[])]
