@@ -122,4 +122,25 @@ assert "3+ years" not in note and "Roche" in note
 from fastapi.testclient import TestClient
 r = TestClient(m.app).get("/api/jobs").json()
 assert len(r["jobs"]) == 5 and r["lastRun"]["checked"] >= 4
+
+# Telegram fails on the 2nd of 2 new jobs: the failure is in the run history, and the unsent job
+# is retried on the next run instead of being marked as alerted and lost
+for n in (6, 7):
+    GH["jobs"].append({"id": n, "title": f"Backend Engineer {n}", "location": {"name": "Hyderabad"},
+                       "first_published": iso(minutes=n), "absolute_url": f"https://gh/{n}", "company_name": "Acme"})
+    DETAIL[n] = "2+ years Node.js, React"
+good_send, calls = m.tg_send, []
+def flaky_send(text):
+    calls.append(text)
+    if len(calls) == 2:
+        raise OSError("network down")
+    return good_send(text)
+m.tg_send = flaky_send
+m.run_collect()
+assert len(sent) == 2 and any("Telegram: network down" in e for e in m.last_run()["errors"]), (sent, m.last_run())
+m.tg_send = good_send
+m.run_collect()
+assert len(sent) == 3 and {s.split("\n")[1] for s in sent[1:]} == {"Backend Engineer 6 · Acme", "Backend Engineer 7 · Acme"}, sent
+m.run_collect()
+assert len(sent) == 3  # and never twice
 print("offline end-to-end ok:", sorted(titles), "| Telegram alerts:", len(sent))

@@ -150,22 +150,24 @@ def send_alerts(jobs, prime=False):
                      for r in con.execute("SELECT j.body FROM jobs j JOIN alerts a ON a.id = j.id")}
     new = [j for j in jobs if j["id"] not in done and daily_jobs.same_job_key(j) not in done_keys]
     sent = 0
-    if not prime and new and TG_TOKEN and TG_CHAT:
-        for j in new[:MAX_ALERTS]:
-            try:
-                sent += bool(tg_send(alert_text(j)))
-            except Exception as e:
-                state["error"] = f"Telegram: {e}"[:300]
-                break
-        if len(new) > MAX_ALERTS:
-            try:
-                tg_send(f"+{len(new) - MAX_ALERTS} more new jobs on the page: https://searchengine.suryadeals.com/")
-            except Exception:
-                pass
-    if prime or sent or not (TG_TOKEN and TG_CHAT):
-        now = datetime.now(timezone.utc).isoformat()
-        with db() as con:
-            con.executemany("INSERT OR IGNORE INTO alerts VALUES (?,?)", [(j["id"], now) for j in new])
+    if prime or not (TG_TOKEN and TG_CHAT):
+        done_now = new  # first run / no Telegram: record only
+    else:  # mark only what Telegram accepted; anything unsent is retried on the next run
+        done_now = []
+        try:
+            for j in new[:MAX_ALERTS]:
+                if not tg_send(alert_text(j)):
+                    raise RuntimeError("message not accepted")
+                done_now.append(j)
+                sent += 1
+            rest = new[MAX_ALERTS:]
+            if rest and tg_send(f"+{len(rest)} more new jobs on the page: https://searchengine.suryadeals.com/"):
+                done_now += rest
+        except Exception as e:
+            state["error"] = f"Telegram: {e}"[:300]
+    now = datetime.now(timezone.utc).isoformat()
+    with db() as con:
+        con.executemany("INSERT OR IGNORE INTO alerts VALUES (?,?)", [(j["id"], now) for j in done_now])
     return sent
 
 
@@ -192,7 +194,8 @@ def run_collect():
         added = save_jobs(out["kept"])
         alerted = send_alerts(out["kept"], prime=first)
         meta = {"at": out["runAt"], "checked": len(out["kept"]) + out["rejectedCount"], "added": added,
-                "alerted": alerted, "sources": out["sources"], "errors": out["errors"][:10]}
+                "alerted": alerted, "sources": out["sources"],
+                "errors": out["errors"][:10] + ([state["error"]] if state["error"] else [])}  # Telegram failures too
         with db() as con:
             con.execute("INSERT INTO runs VALUES (?,?)", (meta["at"], json.dumps(meta)))
     except Exception as e:  # keep the server up; show the error on the page
