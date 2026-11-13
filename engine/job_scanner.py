@@ -51,14 +51,22 @@ MY_STACK = re.compile(r"\b(react|node\.?js|node|typescript|javascript|python|fas
 YEARS = re.compile(r"(\d{1,2})\s*\+?\s*(?:-|–|to)?\s*(?:\d{1,2})?\s*\+?\s*years?", re.I)
 
 
+OTHER_CITY = (r"bengaluru|bangalore|pune|gurgaon|gurugram|noida|delhi|ncr|mumbai|navi mumbai|thane|chennai|kolkata|"
+              r"mohali|chandigarh|ahmedabad|gandhinagar|jaipur|indore|kochi|coimbatore|trivandrum|thiruvananthapuram|"
+              r"nagpur|lucknow|bhubaneswar|vadodara|surat|mysuru|mysore|mangalore|visakhapatnam|vizag|vijayawada")
+LOC_OTHER_CITY = re.compile(r"\b(" + OTHER_CITY + r")\b", re.I)
+
+
 def location_ok(loc, remote_flag=False):
-    """Return a label if the job location suits Surya, else None."""
+    """Return a label if the job location suits Surya, else None.
+    remote_flag comes from a search filter (LinkedIn "remote"), which also returns office jobs: it only
+    counts when the location doesn't name another city. "Gurugram, Haryana, India" stays an office job."""
     if LOC_HYD.search(loc):
         return "Hyderabad"
-    remote = remote_flag or LOC_REMOTE.search(loc)
+    remote = LOC_REMOTE.search(loc) or (remote_flag and not LOC_OTHER_CITY.search(loc))
     if remote and LOC_OPEN.search(loc):
         return "Remote (India/APAC)"
-    if LOC_OPEN.search(loc) and not re.search(r"bengaluru|bangalore|pune|gurgaon|gurugram|noida|delhi|mumbai|chennai|kolkata", loc, re.I):
+    if LOC_OPEN.search(loc) and not LOC_OTHER_CITY.search(loc):
         return "India (check city)"
     return None
 
@@ -241,6 +249,10 @@ def _selfcheck():
     assert location_ok("Bengaluru, India") is None
     assert location_ok("Remote (Worldwide)") is None and location_ok("Anywhere", remote_flag=True) is None
     assert location_ok("Remote - Global") is None
+    # LinkedIn's remote search returned Meritto, on-site in Gurugram (13 Nov): the search flag must not win
+    assert location_ok("Gurugram, Haryana, India", remote_flag=True) is None
+    assert location_ok("India", remote_flag=True) == "Remote (India/APAC)"
+    assert location_ok("Remote - Bengaluru, India") == "Remote (India/APAC)"  # says remote itself
     assert keep({"title": "Software Engineer II", "loc": "Hyderabad"})
     assert keep({"title": "Senior Software Engineer", "loc": "Hyderabad"})  # judged by years in daily_jobs
     assert not keep({"title": "Lead Software Engineer", "loc": "Hyderabad"})

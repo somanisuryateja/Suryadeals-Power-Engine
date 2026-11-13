@@ -40,8 +40,7 @@ MAX_YEARS = 3
 PAY_FLOOR_LAKH = 12
 BAD_DESC = re.compile(r"\boutsourcing\b|fixed price|paid on completion|data annotation|data labell?ing|equity[- ]only", re.I)
 # A "remote" search hit whose JD pins the job to an office in another city (LinkedIn's remote filter is loose).
-OTHER_CITY = (r"bengaluru|bangalore|pune|gurgaon|gurugram|noida|delhi|ncr|mumbai|chennai|kolkata|mohali|chandigarh|"
-              r"ahmedabad|jaipur|indore|kochi|coimbatore|trivandrum|thiruvananthapuram|nagpur|lucknow|bhubaneswar")
+OTHER_CITY = js.OTHER_CITY  # one city list for the location label and the JD check
 ONSITE_ELSEWHERE = re.compile(r"(?:on-?site|in-office|work from (?:the |our )?office|based in|work from|relocate to|"
                               r"location\s*:)[^.]{0,60}?\b(" + OTHER_CITY + r")\b", re.I)
 # Job boards that re-post someone else's listing (apply at the source instead), or re-dated old ones.
